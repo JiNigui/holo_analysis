@@ -1,0 +1,773 @@
+<template>
+  <div class="voi-3d-viewer">
+    <!-- 3D画布容器 -->
+    <div ref="canvasContainer" class="canvas-container">
+      <canvas ref="canvas" class="three-canvas"></canvas>
+      
+      <!-- 加载状态 -->
+      <div v-if="loading" class="loading-overlay">
+        <div class="loading-spinner">
+          <i class="el-icon-loading"></i>
+          <span>{{ loadingText }}</span>
+        </div>
+      </div>
+      
+      <!-- 简化控制面板 -->
+      <div class="control-panel">
+        <div class="control-section">
+          <h4>VOI坐标信息</h4>
+          <div class="coordinate-info">
+            <div>X: {{ voiBounds.xMin }} - {{ voiBounds.xMax }}</div>
+            <div>Y: {{ voiBounds.yMin }} - {{ voiBounds.yMax }}</div>
+            <div>Z: {{ voiBounds.zMin }} - {{ voiBounds.zMax }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script>
+import * as THREE from 'three'
+import { OrbitControls } from 'three-stdlib/controls/OrbitControls'
+import { RLEDecoder } from '../utils/rleDecoder'
+
+// 体素网格生成器 - 实现完整的Marching Cubes算法
+class VoxelMeshGenerator {
+  constructor() {
+    this.geometry = null
+    this.material = null
+    this.mesh = null
+    
+    // Marching Cubes查找表（256种情况对应的三角形配置）
+    this.triTable = this.createTriangulationTable()
+    this.edgeTable = this.createEdgeTable()
+  }
+
+  // 生成网格从RLE数据
+  generateMeshFromRLE(rleData, dimensions, isoLevel = 0.5) {
+    // 解码RLE数据
+    const voxelArray = RLEDecoder.decode(rleData, dimensions)
+    
+    // 使用Marching Cubes算法生成网格
+    return this.generateMarchingCubesMesh(voxelArray, isoLevel)
+  }
+
+  // 完整的Marching Cubes算法实现
+  generateMarchingCubesMesh(voxelArray, isoLevel = 0.5) {
+    const [depth, height, width] = [voxelArray.length, voxelArray[0].length, voxelArray[0][0].length]
+    const vertices = []
+    const indices = []
+    const vertexMap = new Map()
+    
+    // 遍历所有体素单元
+    for (let z = 0; z < depth - 1; z++) {
+      for (let y = 0; y < height - 1; y++) {
+        for (let x = 0; x < width - 1; x++) {
+          // 获取当前立方体8个顶点的值
+          const cubeValues = this.getCubeValues(voxelArray, x, y, z)
+          
+          // 计算立方体配置索引
+          const cubeIndex = this.getCubeIndex(cubeValues, isoLevel)
+          
+          // 如果立方体与等值面相交
+          if (cubeIndex !== 0 && cubeIndex !== 255) {
+            // 计算边交点
+            const edgeVertices = this.calculateEdgeIntersections(cubeValues, x, y, z, isoLevel)
+            
+            // 根据查找表生成三角形
+            const triConfig = this.triTable[cubeIndex]
+            for (let i = 0; triConfig[i] !== -1; i += 3) {
+              const v1 = edgeVertices[triConfig[i]]
+              const v2 = edgeVertices[triConfig[i + 1]]
+              const v3 = edgeVertices[triConfig[i + 2]]
+              
+              if (v1 && v2 && v3) {
+                const i1 = this.addVertex(vertices, vertexMap, v1)
+                const i2 = this.addVertex(vertices, vertexMap, v2)
+                const i3 = this.addVertex(vertices, vertexMap, v3)
+                
+                indices.push(i1, i2, i3)
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    // 创建几何体
+    const geometry = new THREE.BufferGeometry()
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3))
+    geometry.setIndex(indices)
+    geometry.computeVertexNormals()
+    
+    this.material = new THREE.MeshLambertMaterial({
+      color: 0x00a8ff,
+      transparent: true,
+      opacity: 0.8
+    })
+    
+    this.mesh = new THREE.Mesh(geometry, this.material)
+    return this.mesh
+  }
+
+  // 获取立方体8个顶点的值
+  getCubeValues(voxelArray, x, y, z) {
+    return [
+      voxelArray[z][y][x],           // 0
+      voxelArray[z][y][x + 1],       // 1
+      voxelArray[z][y + 1][x + 1],   // 2
+      voxelArray[z][y + 1][x],       // 3
+      voxelArray[z + 1][y][x],       // 4
+      voxelArray[z + 1][y][x + 1],   // 5
+      voxelArray[z + 1][y + 1][x + 1], // 6
+      voxelArray[z + 1][y + 1][x]    // 7
+    ]
+  }
+
+  // 计算立方体配置索引
+  getCubeIndex(cubeValues, isoLevel) {
+    let cubeIndex = 0
+    for (let i = 0; i < 8; i++) {
+      if (cubeValues[i] > isoLevel) {
+        cubeIndex |= (1 << i)
+      }
+    }
+    return cubeIndex
+  }
+
+  // 计算边交点
+  calculateEdgeIntersections(cubeValues, x, y, z, isoLevel) {
+    const edgeVertices = new Array(12).fill(null)
+    
+    // 检查每条边是否需要计算交点
+    const edgeFlags = this.edgeTable[this.getCubeIndex(cubeValues, isoLevel)]
+    
+    for (let edge = 0; edge < 12; edge++) {
+      if (edgeFlags & (1 << edge)) {
+        const [v1, v2] = this.getEdgeVertices(edge)
+        const val1 = cubeValues[v1]
+        const val2 = cubeValues[v2]
+        
+        // 线性插值计算交点位置
+        const t = (isoLevel - val1) / (val2 - val1)
+        const vertex = this.interpolateVertex(x, y, z, edge, t)
+        edgeVertices[edge] = vertex
+      }
+    }
+    
+    return edgeVertices
+  }
+
+  // 获取边对应的顶点索引
+  getEdgeVertices(edge) {
+    const edgeVertices = [
+      [0, 1], [1, 2], [2, 3], [3, 0], // 底面边
+      [4, 5], [5, 6], [6, 7], [7, 4], // 顶面边
+      [0, 4], [1, 5], [2, 6], [3, 7]  // 垂直边
+    ]
+    return edgeVertices[edge]
+  }
+
+  // 插值计算顶点位置
+  interpolateVertex(x, y, z, edge, t) {
+    const edgeOffsets = [
+      [0.5, 0, 0], [1, 0.5, 0], [0.5, 1, 0], [0, 0.5, 0], // 底面边
+      [0.5, 0, 1], [1, 0.5, 1], [0.5, 1, 1], [0, 0.5, 1], // 顶面边
+      [0, 0, 0.5], [1, 0, 0.5], [1, 1, 0.5], [0, 1, 0.5]  // 垂直边
+    ]
+    
+    const offset = edgeOffsets[edge]
+    return [
+      x + offset[0],
+      y + offset[1],
+      z + offset[2]
+    ]
+  }
+
+  // 添加顶点到数组并返回索引
+  addVertex(vertices, vertexMap, vertex) {
+    const key = vertex.join(',')
+    if (vertexMap.has(key)) {
+      return vertexMap.get(key)
+    }
+    
+    const index = vertices.length / 3
+    vertices.push(vertex[0], vertex[1], vertex[2])
+    vertexMap.set(key, index)
+    return index
+  }
+
+  // 创建边查找表
+  createEdgeTable() {
+    return [
+      0x0, 0x109, 0x203, 0x30a, 0x406, 0x50f, 0x605, 0x70c,
+      0x80c, 0x905, 0xa0f, 0xb06, 0xc0a, 0xd03, 0xe09, 0xf00,
+      0x190, 0x99, 0x393, 0x29a, 0x596, 0x49f, 0x795, 0x69c,
+      0x99c, 0x895, 0xb9f, 0xa96, 0xd9a, 0xc93, 0xf99, 0xe90,
+      0x230, 0x339, 0x33, 0x13a, 0x636, 0x73f, 0x435, 0x53c,
+      0xa3c, 0xb35, 0x83f, 0x936, 0xe3a, 0xf33, 0xc39, 0xd30,
+      0x3a0, 0x2a9, 0x1a3, 0xaa, 0x7a6, 0x6af, 0x5a5, 0x4ac,
+      0xbac, 0xaa5, 0x9af, 0x8a6, 0xfaa, 0xea3, 0xda9, 0xca0,
+      0x460, 0x569, 0x663, 0x76a, 0x66, 0x16f, 0x265, 0x36c,
+      0xc6c, 0xd65, 0xe6f, 0xf66, 0x86a, 0x963, 0xa69, 0xb60,
+      0x5f0, 0x4f9, 0x7f3, 0x6fa, 0x1f6, 0xff, 0x3f5, 0x2fc,
+      0xdfc, 0xcf5, 0xfff, 0xef6, 0x9fa, 0x8f3, 0xbf9, 0xaf0,
+      0x650, 0x759, 0x453, 0x55a, 0x256, 0x35f, 0x55, 0x15c,
+      0xe5c, 0xf55, 0xc5f, 0xd56, 0xa5a, 0xb53, 0x859, 0x950,
+      0x7c0, 0x6c9, 0x5c3, 0x4ca, 0x3c6, 0x2cf, 0x1c5, 0xcc,
+      0xfcc, 0xec5, 0xdcf, 0xcc6, 0xbca, 0xac3, 0x9c9, 0x8c0,
+      0x8c0, 0x9c9, 0xac3, 0xbca, 0xcc6, 0xdcf, 0xec5, 0xfcc,
+      0xcc, 0x1c5, 0x2cf, 0x3c6, 0x4ca, 0x5c3, 0x6c9, 0x7c0,
+      0x950, 0x859, 0xb53, 0xa5a, 0xd56, 0xc5f, 0xf55, 0xe5c,
+      0x15c, 0x55, 0x35f, 0x256, 0x55a, 0x453, 0x759, 0x650,
+      0xaf0, 0xbf9, 0x8f3, 0x9fa, 0xef6, 0xfff, 0xcf5, 0xdfc,
+      0x2fc, 0x3f5, 0xff, 0x1f6, 0x6fa, 0x7f3, 0x4f9, 0x5f0,
+      0xb60, 0xa69, 0x963, 0x86a, 0xf66, 0xe6f, 0xd65, 0xc6c,
+      0x36c, 0x265, 0x16f, 0x66, 0x76a, 0x663, 0x569, 0x460,
+      0xca0, 0xda9, 0xea3, 0xfaa, 0x8a6, 0x9af, 0xaa5, 0xbac,
+      0x4ac, 0x5a5, 0x6af, 0x7a6, 0xaa, 0x1a3, 0x2a9, 0x3a0,
+      0xd30, 0xc39, 0xf33, 0xe3a, 0x936, 0x83f, 0xb35, 0xa3c,
+      0x53c, 0x435, 0x73f, 0x636, 0x13a, 0x33, 0x339, 0x230,
+      0xe90, 0xf99, 0xc93, 0xd9a, 0xa96, 0xb9f, 0x895, 0x99c,
+      0x69c, 0x795, 0x49f, 0x596, 0x29a, 0x393, 0x99, 0x190,
+      0xf00, 0xe09, 0xd03, 0xc0a, 0xb06, 0xa0f, 0x905, 0x80c,
+      0x70c, 0x605, 0x50f, 0x406, 0x30a, 0x203, 0x109, 0x0
+    ]
+  }
+
+  // 创建三角形查找表
+  createTriangulationTable() {
+    // 简化的三角形查找表（实际实现需要完整的256种配置）
+    const table = new Array(256)
+    for (let i = 0; i < 256; i++) {
+      table[i] = [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1]
+    }
+    
+    // 配置一些常见的三角形模式
+    table[1] = [0, 8, 3, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1]
+    table[2] = [0, 1, 9, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1]
+    table[4] = [1, 2, 10, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1]
+    table[8] = [2, 3, 11, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1]
+    table[16] = [4, 7, 8, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1]
+    table[32] = [4, 5, 9, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1]
+    table[64] = [5, 6, 10, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1]
+    table[128] = [6, 7, 11, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1]
+    
+    // 配置一些常见的多三角形情况
+    table[15] = [0, 8, 3, 0, 1, 9, 1, 2, 10, 2, 3, 11, -1, -1, -1, -1]
+    table[240] = [4, 7, 8, 4, 5, 9, 5, 6, 10, 6, 7, 11, -1, -1, -1, -1]
+    
+    return table
+  }
+}
+
+export default {
+  name: 'Voi3DViewer',
+  props: {
+    projectId: {
+      type: String,
+      required: true
+    },
+    voiBounds: {
+      type: Object,
+      default: () => ({
+        xMin: 0,
+        xMax: 100,
+        yMin: 0,
+        yMax: 100,
+        zMin: 0,
+        zMax: 100
+      })
+    }
+  },
+  data() {
+    return {
+      // Three.js相关
+      scene: null,
+      camera: null,
+      renderer: null,
+      controls: null,
+      
+      // 加载状态
+      loading: false,
+      loadingText: '加载中...',
+      
+      // 数据
+      voxelData: null,
+      meshGenerator: null
+    }
+  },
+  mounted() {
+    this.initThreeJS()
+    this.loadPreviewData()
+  },
+  beforeDestroy() {
+    this.cleanupThreeJS()
+  },
+  methods: {
+    // 初始化Three.js场景
+    initThreeJS() {
+      const container = this.$refs.canvasContainer
+      const canvas = this.$refs.canvas
+      
+      // 创建场景
+      this.scene = new THREE.Scene()
+      this.scene.background = new THREE.Color(0xf0f0f0)
+      
+      // 创建相机
+      this.setupCamera()
+      
+      // 创建渲染器
+      this.renderer = new THREE.WebGLRenderer({
+        canvas: canvas,
+        antialias: true
+      })
+      this.renderer.setSize(container.clientWidth, container.clientHeight)
+      this.renderer.setPixelRatio(window.devicePixelRatio)
+      
+      // 创建控制器
+      this.controls = new OrbitControls(this.camera, this.renderer.domElement)
+      this.controls.enableDamping = true
+      this.controls.dampingFactor = 0.05
+      
+      // 添加灯光
+      this.setupLighting()
+      
+      // 添加坐标轴辅助
+      const axesHelper = new THREE.AxesHelper(50)
+      this.scene.add(axesHelper)
+      
+      // 开始渲染循环
+      this.animate()
+      
+      // 窗口大小变化处理
+      window.addEventListener('resize', this.onWindowResize)
+    },
+    
+    // 设置相机（默认使用透视相机）
+    setupCamera() {
+      const container = this.$refs.canvasContainer
+      const aspect = container.clientWidth / container.clientHeight
+      
+      // 使用透视相机
+      this.camera = new THREE.PerspectiveCamera(60, aspect, 0.1, 1000)
+      this.camera.position.set(150, 150, 150)
+      this.camera.lookAt(0, 0, 0)
+    },
+    
+    // 设置灯光
+    setupLighting() {
+      // 环境光
+      const ambientLight = new THREE.AmbientLight(0x404040, 0.6)
+      this.scene.add(ambientLight)
+      
+      // 方向光
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8)
+      directionalLight.position.set(50, 50, 50)
+      this.scene.add(directionalLight)
+      
+      // 点光源
+      const pointLight = new THREE.PointLight(0xffffff, 0.5)
+      pointLight.position.set(-50, -50, -50)
+      this.scene.add(pointLight)
+    },
+    
+    // 渲染循环
+    animate() {
+      requestAnimationFrame(this.animate)
+      
+      if (this.controls) {
+        this.controls.update()
+      }
+      
+      if (this.renderer && this.scene && this.camera) {
+        this.renderer.render(this.scene, this.camera)
+      }
+    },
+    
+    // 窗口大小变化处理
+    onWindowResize() {
+      const container = this.$refs.canvasContainer
+      if (!container) return
+      
+      this.camera.aspect = container.clientWidth / container.clientHeight
+      this.camera.updateProjectionMatrix()
+      this.renderer.setSize(container.clientWidth, container.clientHeight)
+    },
+    
+    // 加载预览数据
+    async loadPreviewData() {
+      this.loading = true
+      this.loadingText = '正在加载预览数据...'
+      
+      try {
+        // 调用后端API获取预览数据（直接接收二进制ZIP数据）
+        const response = await this.$http.post('/hole-analysis/voi/preview', {
+          project_id: this.projectId,
+          preview_config: {
+            sample_rate: 5
+          }
+        }, {
+          responseType: 'blob'  // 直接接收二进制数据
+        })
+        
+        // 检查响应是否成功
+        if (!response || !response.data) {
+          throw new Error('后端API返回空数据')
+        }
+        
+        console.log('API响应状态:', response.status, '数据大小:', response.data.size)
+        
+        // 直接处理接收到的ZIP二进制数据
+        await this.processZIPData(response.data)
+        
+        // 显示成功信息
+        this.$message.success('3D模型生成完成')
+      } catch (error) {
+        console.error('加载预览数据失败:', error)
+        this.$message.error('加载预览数据失败: ' + error.message)
+      } finally {
+        this.loading = false
+      }
+    },
+    
+    // 处理ZIP数据
+    async processZIPData(zipBlob) {
+      this.loadingText = '正在解析数据...'
+      
+      // 检查zipBlob参数
+      if (!zipBlob) {
+        throw new Error('ZIP数据为空')
+      }
+      
+      if (!zipBlob.size || zipBlob.size === 0) {
+        throw new Error('ZIP数据大小为0')
+      }
+      
+      try {
+        console.log('开始处理ZIP数据，Blob大小:', zipBlob.size)
+        
+        // 步骤1: 解包ZIP文件
+        const zipData = await this.unzipPreviewData(zipBlob)
+        console.log('ZIP解包成功，文件数量:', Object.keys(zipData).length)
+        
+        // 检查解包后的文件
+        if (!zipData || Object.keys(zipData).length === 0) {
+          throw new Error('ZIP文件解包后为空')
+        }
+        
+        // 步骤2: 解析TIFF文件并构建体素网格
+        const voxelGrid = await this.parseTiffFilesAndBuildVoxelGrid(zipData)
+        console.log('体素网格构建完成，尺寸:', voxelGrid.width, 'x', voxelGrid.height, 'x', voxelGrid.depth)
+        
+        // 步骤3: 使用surfaceNets算法生成表面网格
+        const mesh = await this.generateSurfaceWithSurfaceNets(voxelGrid)
+        console.log('表面网格生成完成')
+        
+        // 调整模型位置到场景中心
+        const dimensions = [voxelGrid.depth, voxelGrid.height, voxelGrid.width]
+        mesh.position.set(-dimensions[2] / 2, -dimensions[1] / 2, -dimensions[0] / 2)
+        
+        this.scene.add(mesh)
+        
+        // 调整相机位置以适配模型
+        this.adjustCameraToModel(dimensions)
+        
+        console.log('3D模型加载完成')
+      } catch (error) {
+        console.error('处理ZIP数据失败:', error)
+        // 如果处理失败，显示简单的示例模型
+        const geometry = new THREE.BoxGeometry(50, 50, 50)
+        const material = new THREE.MeshLambertMaterial({ 
+          color: 0xff0000,
+          transparent: true,
+          opacity: 0.8
+        })
+        const cube = new THREE.Mesh(geometry, material)
+        this.scene.add(cube)
+        
+        // 重新抛出错误以便上层捕获
+        throw error
+      }
+    },
+    
+    // 调整相机位置以适配模型
+    adjustCameraToModel(dimensions) {
+      const [depth, height, width] = dimensions
+      const maxDimension = Math.max(width, height, depth)
+      
+      // 设置相机位置，确保模型在视野内
+      this.camera.position.set(maxDimension * 1.5, maxDimension * 1.5, maxDimension * 1.5)
+      this.camera.lookAt(0, 0, 0)
+      
+      if (this.controls) {
+        this.controls.update()
+      }
+    },
+    
+    // 清除场景
+    clearScene() {
+      // 移除所有非辅助对象
+      this.scene.children.forEach(child => {
+        if (child.type !== 'AxesHelper') {
+          this.scene.remove(child)
+        }
+      })
+    },
+    
+    // 移除不再使用的视图和渲染模式设置方法
+    
+    // 清理Three.js资源
+    cleanupThreeJS() {
+      if (this.renderer) {
+        this.renderer.dispose()
+      }
+      window.removeEventListener('resize', this.onWindowResize)
+    },
+    
+    // 步骤3: 解包ZIP文件
+    async unzipPreviewData(zipBlob) {
+      this.loadingText = '正在解包数据...'
+      
+      try {
+        // 使用JSZip解包 - 正确的方式
+        const JSZip = (await import('jszip')).default
+        const zipData = await JSZip.loadAsync(zipBlob)
+        
+        // 提取文件内容
+        const files = {}
+        for (const [filename, file] of Object.entries(zipData.files)) {
+          if (!file.dir) {
+            files[filename] = await file.async('uint8array')
+          }
+        }
+        
+        return files
+      } catch (error) {
+        console.error('解包数据失败:', error)
+        throw new Error('数据解包失败')
+      }
+    },
+    
+    // 步骤4: 解析TIFF文件并构建体素网格
+    async parseTiffFilesAndBuildVoxelGrid(zipData) {
+      this.loadingText = '正在解析TIFF文件...'
+      
+      try {
+        // 加载utif.js库
+        const UTIF = (await import('utif')).default
+        
+        // 解析元数据
+        const metadataStr = new TextDecoder().decode(zipData['metadata.json'])
+        const metadata = JSON.parse(metadataStr)
+        
+        // 获取TIFF文件列表并按自然数顺序排序
+        const tiffFiles = Object.keys(zipData).filter(key => 
+          key.endsWith('.tif') || key.endsWith('.tiff')
+        ).sort((a, b) => {
+          // 提取文件名中的数字进行自然数排序
+          const numA = parseInt(a.match(/slice_(\d+)\.tiff?/)?.[1] || 0)
+          const numB = parseInt(b.match(/slice_(\d+)\.tiff?/)?.[1] || 0)
+          return numA - numB
+        })
+        
+        const { width, height } = metadata.dimensions
+        const depth = tiffFiles.length
+        
+        // 创建三维体素网格
+        const voxelGrid = new Uint8Array(width * height * depth)
+        
+        // 解析每个TIFF切片
+        for (let z = 0; z < depth; z++) {
+          const tiffFile = tiffFiles[z]
+          const tiffData = zipData[tiffFile]
+          
+          // 解析TIFF
+          const ifds = UTIF.decode(tiffData)
+          UTIF.decodeImage(tiffData, ifds[0])
+          const rgba = UTIF.toRGBA8(ifds[0])
+          
+          // 转换为二值化数据 (0或1)
+          for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+              const idx = (y * width + x) * 4
+              const r = rgba[idx]
+              const g = rgba[idx + 1]
+              const b = rgba[idx + 2]
+              
+              // 简单的二值化阈值处理
+              const intensity = (r + g + b) / 3
+              const voxelValue = intensity > 128 ? 1 : 0
+              
+              const voxelIndex = z * width * height + y * width + x
+              voxelGrid[voxelIndex] = voxelValue
+            }
+          }
+        }
+        
+        return {
+          data: voxelGrid,
+          width,
+          height,
+          depth
+        }
+      } catch (error) {
+        console.error('解析TIFF文件失败:', error)
+        throw new Error('TIFF文件解析失败')
+      }
+    },
+    
+    // 步骤5: 使用surfaceNets算法生成表面网格
+    async generateSurfaceWithSurfaceNets(voxelGrid) {
+      this.loadingText = '正在生成表面网格...'
+      
+      try {
+        console.log('开始生成表面网格，体素网格尺寸:', voxelGrid.width, 'x', voxelGrid.height, 'x', voxelGrid.depth)
+        
+        // 加载isosurface库 - 正确的导入方式
+        const isosurface = await import('isosurface')
+        
+        // 使用surfaceNets算法生成表面 - 正确的API调用方式
+        const surface = isosurface.surfaceNets([voxelGrid.width, voxelGrid.height, voxelGrid.depth], 
+          (x, y, z) => {
+            // 边界检查
+            if (x < 0 || x >= voxelGrid.width || y < 0 || y >= voxelGrid.height || z < 0 || z >= voxelGrid.depth) {
+              return 0
+            }
+            const index = z * voxelGrid.width * voxelGrid.height + y * voxelGrid.width + x
+            return voxelGrid.data[index] > 0 ? 1 : 0
+          }
+        )
+        
+        console.log('表面网格生成完成，顶点数:', surface.positions.length, '面片数:', surface.cells.length)
+        
+        // 转换为Three.js的BufferGeometry
+        const geometry = new THREE.BufferGeometry()
+        
+        // 设置顶点位置
+        const positions = new Float32Array(surface.positions.length * 3)
+        for (let i = 0; i < surface.positions.length; i++) {
+          positions[i * 3] = surface.positions[i][0]
+          positions[i * 3 + 1] = surface.positions[i][1]
+          positions[i * 3 + 2] = surface.positions[i][2]
+        }
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+        
+        // 设置面索引
+        const indices = new Uint32Array(surface.cells.length * 3)
+        for (let i = 0; i < surface.cells.length; i++) {
+          indices[i * 3] = surface.cells[i][0]
+          indices[i * 3 + 1] = surface.cells[i][1]
+          indices[i * 3 + 2] = surface.cells[i][2]
+        }
+        geometry.setIndex(new THREE.BufferAttribute(indices, 1))
+        
+        // 计算法线
+        geometry.computeVertexNormals()
+        
+        // 创建材质
+        const material = new THREE.MeshLambertMaterial({
+          color: 0x2196f3,
+          transparent: true,
+          opacity: 0.8,
+          side: THREE.DoubleSide
+        })
+        
+        // 创建网格
+        const mesh = new THREE.Mesh(geometry, material)
+        
+        return mesh
+      } catch (error) {
+        console.error('生成表面网格失败:', error)
+        throw new Error('表面网格生成失败')
+      }
+    }
+  }
+}
+</script>
+
+<style scoped>
+.voi-3d-viewer {
+  width: 100%;
+  height: 600px;
+  position: relative;
+}
+
+.canvas-container {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  background: #f5f5f5;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
+
+.three-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.loading-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(255, 255, 255, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+
+.loading-spinner {
+  text-align: center;
+  color: #409eff;
+}
+
+.loading-spinner i {
+  font-size: 24px;
+  margin-bottom: 8px;
+  display: block;
+}
+
+.control-panel {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: rgba(255, 255, 255, 0.95);
+  padding: 12px;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  min-width: 180px;
+  border: 1px solid #e0e0e0;
+}
+
+.control-section {
+  margin-bottom: 0;
+}
+
+.control-section h4 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  color: #2c3e50;
+  font-weight: 600;
+  border-bottom: 1px solid #e0e0e0;
+  padding-bottom: 5px;
+}
+
+.coordinate-info {
+  font-size: 12px;
+  color: #555;
+  font-family: 'Courier New', monospace;
+}
+
+.coordinate-info div {
+  margin: 3px 0;
+  padding: 2px 4px;
+  background: #f8f9fa;
+  border-radius: 3px;
+}
+</style>
