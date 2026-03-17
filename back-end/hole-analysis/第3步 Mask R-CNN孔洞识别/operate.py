@@ -140,16 +140,21 @@ def run_hole_detection(input_dir=None, output_dir=None):
             return {"status": "error", "message": "激活虚拟环境失败"}
         
         # 检查recognize.py文件是否存在
-        script_path = current_dir / "recognize（主函数）.py"
+        script_path = current_dir / "run_detection.py"
         if not script_path.exists():
             return {"status": "error", "message": f"未找到识别脚本: {script_path}"}
         
         print(f"识别脚本路径: {script_path}")
         
         # 构建Python命令（在holo_detectron2环境中执行），传递路径参数
+        unet_model_path = current_dir / "unet.pth"
+        maskrcnn_model_path = current_dir / "model_final.pth"
+    
         python_cmd = [env_python, str(script_path), 
                      f"--input-dir={input_dir}",
-                     f"--output-dir={output_dir}"]
+                     f"--output-dir={output_dir}",
+                     f"--unet-model={unet_model_path}",
+                     f"--maskrcnn-model={maskrcnn_model_path}"]
         
         # 执行孔洞识别脚本
         print("开始执行孔洞识别...")
@@ -200,7 +205,7 @@ def run_hole_detection(input_dir=None, output_dir=None):
                         progress_info["status"] = "processing"
                         print(f"[进度] 开始处理 {progress_info['total_files']} 张图像")
                         
-                elif "进度:" in line:
+                elif "进度:" in line or "检测完成" in line:
                     # 例如: "进度: 50/96 (52.1%) - 第 1/2 批完成"
                     import re
                     match = re.search(r'进度: (\d+)/(\d+) \((\d+\.?\d*)%\) - 第 (\d+)/(\d+) 批完成', line)
@@ -212,7 +217,7 @@ def run_hole_detection(input_dir=None, output_dir=None):
                         progress_info["total_batches"] = int(match.group(5))
                         print(f"[进度] 已完成 {progress_info['processed_files']}/{progress_info['total_files']} ({progress_info['progress_percent']}%)")
                         
-                elif "图像处理完成" in line:
+                elif "检测完成" in line:
                     progress_info["status"] = "completed"
                     print("[进度] 图像处理完成")
         

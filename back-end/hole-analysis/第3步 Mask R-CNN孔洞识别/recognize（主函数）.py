@@ -223,8 +223,8 @@ if __name__ == "__main__":
                        help='输入目录路径（默认: selected_tiff_slices）')
     parser.add_argument('--output-dir', type=str, default='../第4步 数据预处理/masks',
                        help='输出目录路径（默认: ../第4步 数据预处理/masks）')
-    parser.add_argument('--model-path', type=str, default='model_final0203.pth',
-                       help='模型文件路径（默认: model_final0203.pth）')
+    parser.add_argument('--model-path', type=str, default='model_final.pth',
+                       help='模型文件路径（默认: model_final.pth）')
     parser.add_argument('--confidence', type=float, default=0.9,
                        help='置信度阈值（默认: 0.9）')
     
