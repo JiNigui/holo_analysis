@@ -33,7 +33,7 @@ class DirectoryManager:
             'second/tmp',
             'third/selected_tiff_slices', 
             'fourth/masks', 'fourth/output',
-            'fifth/output',
+            'fifth/output','fifth/tmp',
             'sixth/output'
         ]
         

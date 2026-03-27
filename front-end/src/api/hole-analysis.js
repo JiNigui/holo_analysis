@@ -102,7 +102,7 @@ export function executeDataPreprocessing(projectId) {
   })
 }
 
-// 执行目标孔洞分析（第五步）
+// 执行目标孔洞分析（第五步）- 立即返回，后台异步执行
 export function executeTargetHoleAnalysis(projectId) {
   return request({
     url: '/hole-analysis/target-hole-analysis',
@@ -110,8 +110,39 @@ export function executeTargetHoleAnalysis(projectId) {
     data: {
       project_id: projectId
     },
-    responseType: 'blob', // 重要：设置为blob以接收图像文件
-    timeout: 1800000 // 30分钟超时，目标孔洞分析需要时间
+    timeout: 30000
+  })
+}
+
+// 轮询目标孔洞分析进度
+export function getTargetHoleProgress(projectId) {
+  return request({
+    url: `/hole-analysis/target-hole-progress/${projectId}`,
+    method: 'get',
+    timeout: 10000
+  })
+}
+
+// 获取VOI区域3D表面数据（VTP blob）
+export function getVoiSurface(projectId) {
+  return request({
+    url: `/hole-analysis/projects/${projectId}/voi-3d-data`,
+    method: 'get',
+    responseType: 'blob',
+    timeout: 600000,
+    onDownloadProgress: (progressEvent) => {
+      const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total)
+      console.log(`VOI VTP文件下载进度: ${percentCompleted}%`)
+    }
+  })
+}
+
+// 获取切面参数（法向量和原点）
+export function getCutPlaneParams(projectId) {
+  return request({
+    url: `/hole-analysis/projects/${projectId}/cut-plane-params`,
+    method: 'get',
+    timeout: 10000
   })
 }
 
@@ -123,7 +154,7 @@ export function executeMaxHole3DView(projectId) {
     data: {
       project_id: projectId
     },
-    responseType: 'blob', // 重要：设置为blob以接收压缩数据
-    timeout: 1800000 // 30分钟超时，3D模型数据处理需要时间
+    responseType: 'blob',
+    timeout: 1800000
   })
 }

@@ -1,7 +1,62 @@
-VTK渲染器初始化成功，容器尺寸: 754 x 599
-hole-analysis.js:64 VTK文件下载进度: 17%
-hole-analysis.js:64 VTK文件下载进度: 100%
-cjs.js?!./node_modules/babel-loader/lib/index.js!./node_modules/cache-loader/dist/cjs.js?!./node_modules/vue-loader/lib/index.js?!./src/components/VtkMedicalViewer.vue?vue&type=script&lang=js:198 ArrayBuffer大小: 12425355 bytes
-cjs.js?!./node_modules/babel-loader/lib/index.js!./node_modules/cache-loader/dist/cjs.js?!./node_modules/vue-loader/lib/index.js?!./src/components/VtkMedicalViewer.vue?vue&type=script&lang=js:209 解析成功: 顶点=642417, 面=1296822
-cjs.js?!./node_modules/babel-loader/lib/index.js!./node_modules/cache-loader/dist/cjs.js?!./node_modules/vue-loader/lib/index.js?!./src/components/VtkMedicalViewer.vue?vue&type=script&lang=js:233 模型边界框: (6) [0, 1204, 0, 616, 0, 964]
-cjs.js?!./node_modules/babel-loader/lib/index.js!./node_modules/cache-loader/dist/cjs.js?!./node_modules/vue-loader/lib/index.js?!./src/components/VtkMedicalViewer.vue?vue&type=script&lang=js:234 相机位置: (3) [602, 308, 3690.483991228903]
+INFO:werkzeug:127.0.0.1 - - [27/Mar/2026 21:04:24] "GET /api/hole-analysis/target-hole-progress/14 HTTP/1.1" 200 -
+图像已成功生成: D:\孔洞项目\孔洞分析软件\back-end\Intermediate_data\user_uTest2\fifth\output\projected_2d_image_with_cut_plane_position.png
+记录数据库成功日志失败: Working outside of application context.
+
+This typically means that you attempted to use functionality that needed
+the current application. To solve this, set up an application context
+with app.app_context(). See the documentation for more information.
+INFO:werkzeug:127.0.0.1 - - [27/Mar/2026 21:04:26] "GET /api/hole-analysis/target-hole-progress/14 HTTP/1.1" 200 -
+进度已更新到100%（结果图像生成完成）
+INFO:werkzeug:127.0.0.1 - - [27/Mar/2026 21:04:34] "GET /api/hole-analysis/projects/14/cut-plane-params HTTP/1.1" 200 -
+[VOI-3D] 加载 467 个切片...
+[VOI-3D] 下采样完成: (233, 123, 169)
+[VOI-3D] VTP已保存: D:\孔洞项目\孔洞分析软件\back-end\Intermediate_data\user_uTest2\fifth\tmp\surface_dfbbb942.vtp, 大小: 2.38 MB
+INFO:werkzeug:127.0.0.1 - - [27/Mar/2026 21:04:36] "GET /api/hole-analysis/projects/14/voi-3d-data HTTP/1.1" 200 -
+
+
+cjs.js?!./node_modules/babel-loader/lib/index.js!./node_modules/cache-loader/dist/cjs.js?!./node_modules/vue-loader/lib/index.js?!./src/components/HoleCutViewer3D.vue?vue&type=script&lang=js:129 [HoleCutViewer3D] 加载失败: TypeError: blobRes.arrayBuffer is not a function
+    at eval (cjs.js?!./node_modules/babel-loader/lib/index.js!./node_modules/cache-loader/dist/cjs.js?!./node_modules/vue-loader/lib/index.js?!./src/components/HoleCutViewer3D.vue?vue&type=script&lang=js:118:30)
+    at Generator.eval (regenerator.js:70:51)
+    at Generator.eval [as next] (regeneratorDefine.js:13:21)
+    at asyncGeneratorStep (asyncToGenerator.js:8:17)
+    at _next (asyncToGenerator.js:22:9)
+eval @ cjs.js?!./node_modules/babel-loader/lib/index.js!./node_modules/cache-loader/dist/cjs.js?!./node_modules/vue-loader/lib/index.js?!./src/components/HoleCutViewer3D.vue?vue&type=script&lang=js:129
+eval @ regenerator.js:70
+eval @ regeneratorDefine.js:13
+asyncGeneratorStep @ asyncToGenerator.js:8
+_next @ asyncToGenerator.js:22
+Promise.then
+asyncGeneratorStep @ asyncToGenerator.js:13
+_next @ asyncToGenerator.js:22
+eval @ asyncToGenerator.js:27
+eval @ asyncToGenerator.js:19
+init @ cjs.js?!./node_modules/babel-loader/lib/index.js!./node_modules/cache-loader/dist/cjs.js?!./node_modules/vue-loader/lib/index.js?!./src/components/HoleCutViewer3D.vue?vue&type=script&lang=js:139
+eval @ cjs.js?!./node_modules/babel-loader/lib/index.js!./node_modules/cache-loader/dist/cjs.js?!./node_modules/vue-loader/lib/index.js?!./src/components/HoleCutViewer3D.vue?vue&type=script&lang=js:92
+eval @ vue.runtime.esm.js:1979
+flushCallbacks @ vue.runtime.esm.js:1905
+Promise.then
+timerFunc @ vue.runtime.esm.js:1932
+nextTick @ vue.runtime.esm.js:1989
+visible @ index.js:95
+run @ vue.runtime.esm.js:4556
+flushSchedulerQueue @ vue.runtime.esm.js:4298
+eval @ vue.runtime.esm.js:1979
+flushCallbacks @ vue.runtime.esm.js:1905
+Promise.then
+timerFunc @ vue.runtime.esm.js:1932
+nextTick @ vue.runtime.esm.js:1989
+queueWatcher @ vue.runtime.esm.js:4390
+update @ vue.runtime.esm.js:4532
+notify @ vue.runtime.esm.js:731
+reactiveSetter @ vue.runtime.esm.js:1056
+proxySetter @ vue.runtime.esm.js:4619
+showMaxHole3DView @ cjs.js?!./node_modules/babel-loader/lib/index.js!./node_modules/cache-loader/dist/cjs.js?!./node_modules/vue-loader/lib/index.js?!./src/views/project/detail.vue?vue&type=script&lang=js:1478
+invokeWithErrorHandling @ vue.runtime.esm.js:1853
+invoker @ vue.runtime.esm.js:2178
+invokeWithErrorHandling @ vue.runtime.esm.js:1853
+Vue.$emit @ vue.runtime.esm.js:3876
+handleClick @ element-ui.common.js:9465
+invokeWithErrorHandling @ vue.runtime.esm.js:1853
+invoker @ vue.runtime.esm.js:2178
+original._wrapper @ vue.runtime.esm.js:6901Understand this errorAI
+session-manager.js:106 页面隐藏，开始计时

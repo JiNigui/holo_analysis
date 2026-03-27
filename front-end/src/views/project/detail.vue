@@ -232,17 +232,8 @@
               >
                 执行目标孔洞分析
               </el-button>
-              
-              <!-- 最大孔洞切割3D效果按钮 -->
-              <el-button
-                type="success"
-                :disabled="!stepStatus[4] || !targetHoleResultImage"
-                @click="showMaxHole3DView"
-              >
-                最大孔洞切割3D效果
-              </el-button>
             </div>
-            
+
             <!-- 目标孔洞分析等待提示 -->
             <div v-if="targetHoleAnalysisLoading" class="target-hole-analysis-loading" style="margin-top: 15px;">
               <el-alert
@@ -252,9 +243,9 @@
                 show-icon
               >
                 <i class="el-icon-loading" style="margin-right: 5px;" />
-                系统正在分析目标孔洞并生成切片图像，这可能需要较长时间
+                系统正在分析目标孔洞，这可能需要较长时间
               </el-alert>
-              
+
               <!-- 实时进度条 -->
               <div v-if="showProgressBar" class="target-hole-analysis-progress" style="margin-top: 15px;">
                 <div class="progress-info" style="margin-bottom: 8px; color: #409eff; font-weight: bold;">
@@ -271,37 +262,27 @@
                 </div>
               </div>
             </div>
-            
-            <!-- 目标孔洞分析结果图像显示 -->
-            <div v-if="targetHoleResultImage" class="target-hole-result" style="margin-top: 20px;">
-              <h4>目标孔洞分析结果</h4>
-              <div class="result-image-container">
-                <img 
-                  :src="targetHoleResultImage" 
-                  alt="目标孔洞分析结果"
-                  class="result-image"
-                  style="max-width: 100%; max-height: 500px; border: 1px solid #ddd; border-radius: 4px;"
-                />
-                <div class="image-info" style="margin-top: 10px; color: #666; font-size: 14px;">
-                  <p>目标孔洞切片图像 - 显示目标孔洞的2D投影和切割平面位置</p>
-                </div>
+
+            <!-- 3D数据获取中提示 -->
+            <div v-if="fetching3DData" style="margin-top: 15px;">
+              <el-alert
+                title="正在请求目标孔洞3D显示数据"
+                type="info"
+                :closable="false"
+                show-icon
+              >
+                <i class="el-icon-loading" style="margin-right: 5px;" />
+                正在生成3D模型，请稍候...
+              </el-alert>
+            </div>
+
+            <!-- 目标孔洞切割3D视图（内嵌） -->
+            <div v-if="show3DViewerDialog" style="margin-top: 20px;">
+              <div style="font-weight: bold; margin-bottom: 8px; color: #303133;">目标孔洞切割3D效果</div>
+              <div style="height: 65vh; border: 1px solid #dcdfe6; border-radius: 4px; overflow: hidden;">
+                <HoleCutViewer3D :visible="show3DViewerDialog" :project-id="Number(project.id)" @loaded="onViewer3DLoaded" />
               </div>
             </div>
-            
-            <!-- 最大孔洞3D视图对话框 -->
-            <el-dialog
-              :visible.sync="show3DViewerDialog"
-              title="最大孔洞切割3D效果"
-              width="90%"
-              :fullscreen="false"
-              :close-on-click-modal="false"
-              :close-on-press-escape="false"
-              @opened="on3DViewerDialogOpen"
-            >
-              <div style="height: 70vh;">
-                <MaxHolo3DViewer :visible="show3DViewerDialog" :project-id="Number(project.id)" />
-              </div>
-            </el-dialog>
           </div>
           <!-- 第六步：形态学分析 -->
           <div v-else-if="activeStep === 5">
@@ -332,16 +313,16 @@
 
 <script>
 import { getProject } from '@/api/project'
-import { executeBinaryConversion, executeHoleDetection, executeDataPreprocessing, executeTargetHoleAnalysis } from '@/api/hole-analysis'
+import { executeBinaryConversion, executeHoleDetection, executeDataPreprocessing, executeTargetHoleAnalysis, getTargetHoleProgress } from '@/api/hole-analysis'
 import { getToken } from '@/utils/auth'
 import VtkMedicalViewer from '@/components/VtkMedicalViewer.vue'
-import MaxHolo3DViewer from '@/components/MaxHolo3DViewer.vue'
+import HoleCutViewer3D from '@/components/HoleCutViewer3D.vue'
 
 export default {
   name: 'ProjectDetail',
   components: {
     VtkMedicalViewer,
-    MaxHolo3DViewer
+    HoleCutViewer3D
   },
   data() {
     return {
@@ -379,8 +360,9 @@ export default {
       currentProgress: 0, // 当前进度百分比
       currentProgressStatus: '请求发送中...', // 当前状态文字
       currentProgressMessage: '正在初始化API调用', // 当前详细消息
-      sseConnection: null, // SSE连接对象
-      processingCompleted: false, // 处理是否已完成
+      progressTimer: null, // 轮询定时器
+      pollCount: 0, // 轮询次数
+      fetching3DData: false, // 是否正在获取3D数据
 
       // 3D可视化相关数据
       voiDataLoaded: false, // VOI数据是否已加载
@@ -407,6 +389,9 @@ export default {
   },
   created() {
     this.loadProjectData()
+  },
+  beforeDestroy() {
+    this.stopProgressPolling()
   },
   methods: {
     async loadProjectData() {
@@ -751,54 +736,90 @@ export default {
 
     // 执行目标孔洞分析（第五步）
     async executeTargetHoleAnalysis() {
+      const projectId = this.project.id
+      if (!projectId) {
+        this.$message.error('项目ID不存在')
+        return
+      }
+
+      this.targetHoleAnalysisLoading = true
+      this.showProgressBar = true
+      this.targetHoleResultImage = null
+      this.currentProgress = 0
+      this.currentProgressStatus = '请求发送中...'
+      this.currentProgressMessage = '正在初始化API调用'
+      this.pollCount = 0
+      this.stopProgressPolling()
+
       try {
-        const projectId = this.project.id
-        if (!projectId) {
-          throw new Error('项目ID不存在')
+        const res = await executeTargetHoleAnalysis(projectId)
+        if (res.code !== 200) {
+          throw new Error(res.message || '启动分析失败')
         }
-
-        // 显示等待提示和进度条
-        this.targetHoleAnalysisLoading = true
-        this.showProgressBar = true
-        this.targetHoleResultImage = null // 清空之前的图像
-
-        // 重置进度状态
-        this.currentProgress = 0
-        this.currentProgressStatus = '请求发送中...'
-        this.currentProgressMessage = '正在初始化API调用'
-
-        // 建立SSE连接 - 这将自动触发API调用
-        this.connectToProgressSSE(projectId)
-
-        // 不再需要手动调用API，SSE连接会自动触发triggerTargetHoleAnalysis
-        console.log('SSE连接已建立，等待进度更新...')
-        
+        this.currentProgressStatus = '请求已接受'
+        this.currentProgressMessage = '服务器已接受分析请求，开始处理...'
+        this.startProgressPolling(projectId)
       } catch (error) {
-        console.error('目标孔洞分析初始化失败:', error)
-
-        // 隐藏等待提示和进度条
         this.targetHoleAnalysisLoading = false
         this.showProgressBar = false
+        this.$message.error(error.message || '目标孔洞分析启动失败')
+      }
+    },
 
-        // 关闭SSE连接
-        this.closeSSEConnection()
-
-        // 显示错误消息提示
-        this.$message({
-          message: error.message || '目标孔洞分析初始化失败',
-          type: 'error',
-          duration: 5000,
-          showClose: true
-        })
-
-        // 显示错误提示
-        this.uploadResult = {
-          type: 'error',
-          title: '✗ 目标孔洞分析初始化失败',
-          message: error.message || '处理过程中发生错误，请检查后端日志'
+    // 启动轮询
+    startProgressPolling(projectId) {
+      this.progressTimer = setInterval(async() => {
+        this.pollCount++
+        // 超过300次（约10分钟）超时停止
+        if (this.pollCount > 300) {
+          this.stopProgressPolling()
+          this.targetHoleAnalysisLoading = false
+          this.showProgressBar = false
+          this.$message.error('目标孔洞分析超时（超过10分钟）')
+          return
         }
+        try {
+          const res = await getTargetHoleProgress(projectId)
+          if (res.code !== 200) return
+          const data = res.data
+          this.currentProgress = data.progress || 0
+          this.currentProgressStatus = data.status || ''
+          this.currentProgressMessage = data.message || ''
 
-        throw error
+          // 错误状态（progress===0 且已轮询过几次）
+          if (data.progress === 0 && this.pollCount > 3 && data.status && data.status !== '等待开始') {
+            this.stopProgressPolling()
+            this.targetHoleAnalysisLoading = false
+            this.showProgressBar = false
+            this.$message.error('目标孔洞分析失败: ' + data.status)
+            return
+          }
+
+          // 完成
+          if (data.progress >= 100) {
+            this.stopProgressPolling()
+            this.currentProgress = 100
+            this.currentProgressStatus = '目标孔洞分析成功'
+            this.currentProgressMessage = '分析完成，正在获取3D数据...'
+            this.$set(this.stepStatus, 4, true)
+            setTimeout(() => {
+              this.showProgressBar = false
+              this.targetHoleAnalysisLoading = false
+              this.fetching3DData = true
+              this.show3DViewerDialog = true
+            }, 1000)
+          }
+        } catch (e) {
+          console.error('轮询进度失败:', e)
+        }
+      }, 2000)
+    },
+
+    // 停止轮询
+    stopProgressPolling() {
+      if (this.progressTimer) {
+        clearInterval(this.progressTimer)
+        this.progressTimer = null
       }
     },
 
@@ -1112,6 +1133,11 @@ export default {
       }
     },
 
+    // 3D视图加载完成回调
+    onViewer3DLoaded() {
+      this.fetching3DData = false
+    },
+
     // 显示最大孔洞3D视图
     showMaxHole3DView() {
       console.log('=== 开始显示最大孔洞3D视图 ===')
@@ -1132,310 +1158,8 @@ export default {
       // 模型加载通过visible prop的watch自动触发，无需手动调用
     },
 
-    // 连接到SSE进度推送
-    connectToProgressSSE(projectId) {
-      try {
-        // 如果已有连接，先关闭
-        if (this.sseConnection) {
-          this.sseConnection.close()
-          this.sseConnection = null
-        }
-
-        // 重置所有进度相关状态
-        this.processingCompleted = false
-        this.currentProgress = 0
-        this.currentProgressStatus = '请求发送中...'
-        this.currentProgressMessage = '正在初始化API调用'
-
-        // 获取token并构建SSE连接URL
-        const token = getToken()
-        const sseUrl = `/api/hole-analysis/target-hole-analysis-progress?project_id=${projectId}&token=${token}`
-        
-        // 创建EventSource连接
-        this.sseConnection = new EventSource(sseUrl)
-
-        // 设置连接超时检测
-        const connectionTimeout = setTimeout(() => {
-          if (this.sseConnection && this.sseConnection.readyState === EventSource.CONNECTING) {
-            console.warn('SSE连接超时，尝试重新连接')
-            this.sseConnection.close()
-            this.sseConnection = null
-            this.currentProgressStatus = '连接超时'
-            this.currentProgressMessage = '与服务器建立连接超时，正在重试...'
-            
-            // 延迟重连
-            setTimeout(() => {
-              if (this.targetHoleAnalysisLoading) {
-                this.connectToProgressSSE(projectId)
-              }
-            }, 3000)
-          }
-        }, 10000) // 10秒连接超时
-
-        // 连接建立成功
-        this.sseConnection.onopen = (event) => {
-          clearTimeout(connectionTimeout)
-          console.log('SSE连接已建立', event)
-          this.currentProgressStatus = '连接已建立'
-          this.currentProgressMessage = '开始接收进度更新'
-          
-          // SSE连接成功后，立即触发目标孔洞分析API调用
-          this.triggerTargetHoleAnalysis(projectId)
-        }
-
-        // 接收进度更新
-        this.sseConnection.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data)
-            console.log('收到SSE消息:', data)
-
-            if (data.type === 'progress') {
-              // 更新进度信息
-              this.currentProgress = data.progress
-              this.currentProgressStatus = data.status
-              this.currentProgressMessage = data.message
-              
-              
-            } else if (data.type === 'image') {
-              // 接收到PNG图像数据
-              console.log('接收到PNG图像数据')
-              
-              // 标记处理已完成
-              this.processingCompleted = true
-              
-              // 更新进度到100%
-              this.currentProgress = 100
-              this.currentProgressStatus = '分析完成'
-              this.currentProgressMessage = data.message
-              
-              // 显示PNG图像
-              if (data.image_data) {
-                const imageUrl = `data:image/png;base64,${data.image_data}`
-                this.targetHoleResultImage = imageUrl
-                console.log('PNG图像已显示')
-              }
-              
-              // 更新步骤状态为已完成
-              this.$set(this.stepStatus, 4, true)
-              
-              // 立即移除错误监听器，避免服务器关闭连接时触发错误处理
-              if (this.sseConnection) {
-                this.sseConnection.onerror = null
-                console.log('已移除SSE错误监听器，准备安全关闭连接')
-              }
-              
-              // 延迟关闭连接
-              setTimeout(() => {
-                this.closeSSEConnection()
-                this.showProgressBar = false
-                this.targetHoleAnalysisLoading = false
-                this.$message.success('目标孔洞分析完成')
-              }, 2000)
-              
-            } else if (data.type === 'completed') {
-              // 分析完成（没有PNG图像的情况）
-              this.currentProgress = 100
-              this.currentProgressStatus = '分析完成'
-              this.currentProgressMessage = data.message
-              
-              // 更新步骤状态为已完成
-              this.$set(this.stepStatus, 4, true)
-              
-              // 立即移除错误监听器，避免服务器关闭连接时触发错误处理
-              if (this.sseConnection) {
-                this.sseConnection.onerror = null
-                console.log('已移除SSE错误监听器，准备安全关闭连接')
-              }
-              
-              // 延迟关闭连接
-              setTimeout(() => {
-                this.closeSSEConnection()
-                this.showProgressBar = false
-                this.targetHoleAnalysisLoading = false
-                this.$message.success('目标孔洞分析完成')
-              }, 2000)
-              
-            } else if (data.type === 'connected') {
-              console.log('SSE连接确认:', data.message)
-            }
-          } catch (error) {
-            console.error('解析SSE消息失败:', error)
-          }
-        }
-
-        // 处理连接错误
-    this.sseConnection.onerror = (event) => {
-      console.error('SSE连接错误事件:', event)
-      
-      // 检查连接状态，避免在连接已关闭时重复处理错误
-      if (!this.sseConnection || this.sseConnection.readyState === EventSource.CLOSED) {
-        console.log('SSE连接已关闭，忽略错误事件')
-        return
-      }
-      
-      // 检查是否已经完成处理，如果是则忽略错误（这是正常关闭）
-      if (this.processingCompleted || this.currentProgress >= 100) {
-        console.log('处理已完成，忽略连接错误（正常关闭）')
-        // 不调用closeSSEConnection()，因为可能已经关闭了
-        // 只清理引用
-        this.sseConnection = null
-        return
-      }
-      
-      // 更精确的错误类型判断
-      const readyState = this.sseConnection.readyState
-      
-      // 情况1: 连接正在建立时出错 (真正的网络错误)
-      if (readyState === EventSource.CONNECTING) {
-        console.error('检测到网络连接错误，尝试重连')
-        
-        // 更新错误状态
-        this.currentProgressStatus = '连接错误'
-        this.currentProgressMessage = '与服务器的连接出现问题，正在尝试重连...'
-        
-        // 关闭当前连接
-        this.closeSSEConnection()
-        
-        // 延迟重连，避免过于频繁的重连尝试
-        setTimeout(() => {
-          if (this.targetHoleAnalysisLoading && !this.processingCompleted && this.currentProgress < 100) {
-            console.log('尝试重新连接SSE...')
-            this.connectToProgressSSE(projectId)
-          }
-        }, 3000)
-      }
-      // 情况2: 连接已打开但收到错误 (可能是服务器端错误或正常关闭)
-      else if (readyState === EventSource.OPEN) {
-        console.log('SSE连接已打开但收到错误事件，可能是服务器端问题或正常关闭')
-        
-        // 检查是否是服务器端错误（HTTP状态码错误）
-        if (event && event.target && event.target.status) {
-          const status = event.target.status
-          if (status >= 400) {
-            console.error(`服务器返回错误状态码: ${status}`)
-            this.currentProgressStatus = '服务器错误'
-            this.currentProgressMessage = `服务器返回错误: ${status}`
-          }
-        }
-        
-        // 等待一小段时间，如果连接仍然打开则可能是真正的错误
-        setTimeout(() => {
-          if (this.sseConnection && this.sseConnection.readyState === EventSource.OPEN) {
-            console.error('SSE连接仍然打开，可能是真正的错误，尝试重连')
-            this.currentProgressStatus = '连接错误'
-            this.currentProgressMessage = '连接出现问题，正在尝试重连...'
-            this.closeSSEConnection()
-            setTimeout(() => {
-              if (this.targetHoleAnalysisLoading && !this.processingCompleted && this.currentProgress < 100) {
-                this.connectToProgressSSE(projectId)
-              }
-            }, 2000)
-          } else {
-            console.log('SSE连接已正常关闭，无需重连')
-            this.closeSSEConnection()
-          }
-        }, 1000)
-      }
-      // 情况3: 连接正在关闭中，这是正常情况
-      else if (readyState === EventSource.CLOSED) {
-        console.log('SSE连接正在关闭中，这是正常情况，忽略错误')
-        this.sseConnection = null
-      }
-      // 情况4: 其他状态，直接关闭连接
-      else {
-        console.log('SSE连接处于未知状态，安全关闭连接')
-        this.closeSSEConnection()
-      }
-    }
-
-      } catch (error) {
-        console.error('建立SSE连接失败:', error)
-        this.$message.error('无法建立实时进度连接')
-      }
-    },
-
-    // 触发目标孔洞分析API调用
-    async triggerTargetHoleAnalysis(projectId) {
-      try {
-        console.log('开始调用目标孔洞分析API...')
-        
-        // 更新状态为API调用中
-        this.currentProgressStatus = 'API调用中'
-        this.currentProgressMessage = '正在向服务器发送分析请求'
-        
-        // 使用原生的fetch API来调用后端，以便更好地控制响应处理
-        const response = await fetch(`/api/hole-analysis/target-hole-analysis`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${getToken()}`
-          },
-          body: JSON.stringify({
-            project_id: projectId
-          })
-        })
-
-        if (!response.ok) {
-          const errorText = await response.text()
-          console.error('API调用HTTP错误:', response.status, errorText)
-          throw new Error(`HTTP ${response.status}: ${errorText}`)
-        }
-
-        const result = await response.json()
-        
-        if (result.code === 200) {
-          console.log('目标孔洞分析API调用成功')
-          this.currentProgressStatus = '请求已接受'
-          this.currentProgressMessage = '服务器已接受分析请求，开始处理...'
-          // 进度更新将通过SSE推送，无需额外处理
-        } else {
-          console.error('目标孔洞分析API调用失败:', result.message)
-          this.$message.error(`目标孔洞分析失败: ${result.message}`)
-          
-          // 更新错误状态
-          this.currentProgressStatus = 'API调用失败'
-          this.currentProgressMessage = `API调用失败: ${result.message}`
-          
-          // 关闭SSE连接
-          this.closeSSEConnection()
-          this.showProgressBar = false
-          this.targetHoleAnalysisLoading = false
-        }
-        
-      } catch (error) {
-        console.error('调用目标孔洞分析API失败:', error)
-        this.$message.error('调用目标孔洞分析API失败')
-        
-        // 更新错误状态
-        this.currentProgressStatus = 'API调用异常'
-        this.currentProgressMessage = `API调用异常: ${error.message}`
-        
-        // 关闭SSE连接
-        this.closeSSEConnection()
-        this.showProgressBar = false
-        this.targetHoleAnalysisLoading = false
-      }
-    },
-
-    // 关闭SSE连接
-    closeSSEConnection() {
-      if (this.sseConnection) {
-        // 先移除所有事件监听器，避免在关闭过程中触发错误事件
-        this.sseConnection.onmessage = null
-        this.sseConnection.onerror = null
-        this.sseConnection.onopen = null
-        
-        // 检查连接状态，如果已经关闭则不需要再次关闭
-        if (this.sseConnection.readyState !== EventSource.CLOSED) {
-          this.sseConnection.close()
-        }
-        
-        this.sseConnection = null
-        console.log('SSE连接已安全关闭')
-      }
-    }
-
   }
+
 }
 </script>
 <style scoped>

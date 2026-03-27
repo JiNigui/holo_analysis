@@ -10,19 +10,6 @@ from app.config.config import Config
 from app.utils.jwt_utils import jwt_required
 from app.api.logs import create_system_log
 
-# 从hole-analysis导入完整功能的VOIDataProcessor
-import sys
-import os
-# 添加hole-analysis目录到Python路径
-hole_analysis_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'hole-analysis', '第2步 选择自己感兴趣的区域')
-sys.path.append(hole_analysis_path)
-
-try:
-    from voi_data_processor import VOIDataProcessor
-except ImportError:
-    # 如果导入失败，使用本地的简化版本
-    from app.utils.voi_data_processor import VOIDataProcessor
-
 hole_analysis_bp = Blueprint('hole_analysis', __name__)
 
 @hole_analysis_bp.route('/binary', methods=['POST'])
@@ -1813,9 +1800,189 @@ def execute_target_hole_analysis():
         }), 500
 
 
+@hole_analysis_bp.route('/target-hole-progress/<int:project_id>', methods=['GET'])
+@jwt_required
+def get_target_hole_progress(project_id):
+    """轮询目标孔洞分析进度"""
+    try:
+        user_info = request.user
+        from app.models.project import Project
+        project = Project.query.get(project_id)
+        if not project:
+            return jsonify({'code': 404, 'message': '项目不存在'}), 404
+        if project.user_id != user_info['user_id']:
+            return jsonify({'code': 403, 'message': '没有权限访问此项目'}), 403
+
+        username = user_info['username']
+        project_name = project.project_name
+        progress_file_path = os.path.join(
+            Config.INTERMEDIATE_DATA_DIR,
+            f"{username}_{project_name}",
+            "fifth", "output", "progress_status.json"
+        )
+
+        if not os.path.exists(progress_file_path):
+            return jsonify({'code': 200, 'data': {'progress': 0, 'status': '等待开始', 'message': '进度文件不存在'}}), 200
+
+        with open(progress_file_path, 'r', encoding='utf-8') as f:
+            progress_data = json.load(f)
+
+        result = {
+            'progress': progress_data.get('progress', 0),
+            'status': progress_data.get('status', ''),
+            'message': progress_data.get('message', ''),
+            'timestamp': progress_data.get('timestamp', '')
+        }
+
+        return jsonify({'code': 200, 'data': result}), 200
+
+    except Exception as e:
+        return jsonify({'code': 500, 'message': str(e)}), 500
+
+
+@hole_analysis_bp.route('/projects/<int:project_id>/voi-3d-data', methods=['GET'])
+@jwt_required
+def get_voi_3d_data(project_id):
+    """从third/selected_tiff_slices生成VOI区域VTP并返回"""
+    try:
+        user_info = request.user
+        from app.models.project import Project
+        project = Project.query.get(project_id)
+        if not project:
+            return jsonify({'code': 404, 'message': '项目不存在'}), 404
+        if project.user_id != user_info['user_id']:
+            return jsonify({'code': 403, 'message': '没有权限访问此项目'}), 403
+
+        username = user_info['username']
+        project_name = project.project_name
+
+        slices_dir = os.path.join(
+            Config.INTERMEDIATE_DATA_DIR,
+            f"{username}_{project_name}",
+            "third", "selected_tiff_slices"
+        )
+        if not os.path.exists(slices_dir):
+            return jsonify({'code': 404, 'message': 'VOI切片目录不存在，请先完成VOI选取'}), 404
+
+        slice_files = sorted(
+            [os.path.join(slices_dir, f) for f in os.listdir(slices_dir)
+             if f.startswith('slice_') and f.endswith('.tiff')],
+            key=lambda x: int(''.join(filter(str.isdigit, os.path.basename(x))))
+        )
+        if not slice_files:
+            return jsonify({'code': 400, 'message': 'VOI切片目录中没有slice_*.tiff文件'}), 400
+
+        # 输出目录 fifth/tmp，每次删旧建新
+        vtp_output_dir = os.path.join(
+            Config.INTERMEDIATE_DATA_DIR,
+            f"{username}_{project_name}",
+            "fifth", "tmp"
+        )
+        os.makedirs(vtp_output_dir, exist_ok=True)
+        for fname in os.listdir(vtp_output_dir):
+            if fname.endswith('.vtp'):
+                try:
+                    os.remove(os.path.join(vtp_output_dir, fname))
+                except Exception:
+                    pass
+
+        # 内联 VTKSurfaceProcessorPyVista 逻辑，但使用 slice_* 前缀
+        import numpy as np
+        import tifffile
+        import pyvista as pv
+        from skimage import measure
+        import uuid
+
+        print(f"[VOI-3D] 加载 {len(slice_files)} 个切片...")
+        first_slice = tifffile.imread(slice_files[0])
+        height, width = first_slice.shape
+        volume = np.zeros((len(slice_files), height, width), dtype=np.uint8)
+        for i, fp in enumerate(slice_files):
+            volume[i] = tifffile.imread(fp)
+
+        # 下采样 factor=2
+        factor = 2
+        z_size, y_size, x_size = volume.shape
+        nz, ny, nx = z_size // factor, y_size // factor, x_size // factor
+        cropped = volume[:nz*factor, :ny*factor, :nx*factor]
+        ds = cropped.reshape(nz, factor, ny, factor, nx, factor).mean(axis=(1, 3, 5))
+        ds_binary = (ds > 0.5).astype(np.uint8)
+        print(f"[VOI-3D] 下采样完成: {ds_binary.shape}")
+
+        spacing = (float(factor), float(factor), float(factor))
+        verts, faces, normals, values = measure.marching_cubes(
+            ds_binary, level=0.5, spacing=spacing,
+            gradient_direction='ascent', step_size=2, allow_degenerate=False
+        )
+        faces_pv = np.hstack([[3] + list(face) for face in faces])
+        mesh = pv.PolyData(verts, faces_pv)
+        mesh = mesh.clean()
+        conn = mesh.connectivity(largest_region=True)
+        mesh = conn.extract_surface().clean()
+        mesh = mesh.smooth(n_iter=50, relaxation_factor=0.1)
+
+        vtk_filename = f"surface_{uuid.uuid4().hex[:8]}.vtp"
+        vtk_file_path = os.path.join(vtp_output_dir, vtk_filename)
+        mesh.save(vtk_file_path, binary=True)
+        print(f"[VOI-3D] VTP已保存: {vtk_file_path}, 大小: {os.path.getsize(vtk_file_path)/1024/1024:.2f} MB")
+
+        return send_file(
+            vtk_file_path,
+            as_attachment=True,
+            download_name=vtk_filename,
+            mimetype='application/octet-stream',
+            conditional=True,
+            etag=False,
+            max_age=0
+        )
+
+    except Exception as e:
+        import traceback
+        print(f"[VOI-3D] 错误: {traceback.format_exc()}")
+        return jsonify({'code': 500, 'message': f'生成VOI 3D数据失败: {str(e)}'}), 500
+
+
+@hole_analysis_bp.route('/projects/<int:project_id>/cut-plane-params', methods=['GET'])
+@jwt_required
+def get_cut_plane_params(project_id):
+    """读取analysis_parameters.json，返回切面法向量和原点"""
+    try:
+        user_info = request.user
+        from app.models.project import Project
+        project = Project.query.get(project_id)
+        if not project:
+            return jsonify({'code': 404, 'message': '项目不存在'}), 404
+        if project.user_id != user_info['user_id']:
+            return jsonify({'code': 403, 'message': '没有权限访问此项目'}), 403
+
+        username = user_info['username']
+        project_name = project.project_name
+        params_path = os.path.join(
+            Config.INTERMEDIATE_DATA_DIR,
+            f"{username}_{project_name}",
+            "fifth", "output", "analysis_parameters.json"
+        )
+        if not os.path.exists(params_path):
+            return jsonify({'code': 404, 'message': '分析参数文件不存在，请先完成目标孔洞分析'}), 404
+
+        with open(params_path, 'r', encoding='utf-8') as f:
+            params = json.load(f)
+
+        return jsonify({
+            'code': 200,
+            'data': {
+                'normal': params.get('best_plane'),
+                'origin': params.get('centroid')
+            }
+        }), 200
+
+    except Exception as e:
+        return jsonify({'code': 500, 'message': str(e)}), 500
+
+
 @hole_analysis_bp.route('/target-hole-analysis-progress', methods=['GET'])
 def target_hole_analysis_progress():
-    """目标孔洞分析进度推送（SSE）- 监控真实处理进度"""
+    """目标孔洞分析进度推送（SSE）- 监控真实处理进度（已废弃，保留兼容）"""
     try:
         # 获取项目ID参数
         project_id = request.args.get('project_id')
