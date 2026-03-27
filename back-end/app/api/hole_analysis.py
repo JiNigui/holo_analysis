@@ -472,13 +472,12 @@ def confirm_voi_selection():
 
                         # 获取原始图像尺寸
                         height, width = image.shape[:2]
-                        
-                        # 验证坐标范围，确保在图像尺寸内
-                        # X轴：从右到左裁剪（前端发送的x_min是右侧边界，x_max是左侧边界）
-                        crop_x_min = max(0, min(width, width - int(x_max)))      # 右边界（反转）
-                        crop_x_max = max(crop_x_min + 1, min(width, width - int(x_min)))  # 左边界（反转）
-                        crop_y_min = max(0, min(height - 1, int(y_min)))          # Y轴：从上到下（正确）
-                        crop_y_max = max(crop_y_min + 1, min(height, int(y_max)))  # Y轴：从上到下（正确）
+
+                        # 前端已完成所有坐标转换，直接使用
+                        crop_x_min = max(0, int(x_min))
+                        crop_x_max = min(width, int(x_max))
+                        crop_y_min = max(0, int(y_min))
+                        crop_y_max = min(height, int(y_max))
 
                         # 确保裁剪区域有效
                         if crop_x_min < crop_x_max and crop_y_min < crop_y_max:
@@ -556,62 +555,141 @@ def confirm_voi_selection():
             'message': f'确认VOI区域选择时发生错误: {str(e)}'
         }), 500
 
-@hole_analysis_bp.route('/projects/<int:project_id>/batch/info', methods=['GET'])
+@hole_analysis_bp.route('/projects/<int:project_id>/3d_data', methods=['GET'])
 @jwt_required
-def get_voi_batch_info(project_id):
-    """获取VOI批次信息（支持增量加载）"""
+def get_3d_vtk_data(project_id):
+    """获取3D模型的VTK数据"""
     try:
+        print(f"=== 开始处理3D VTK数据请求 ===")
+        print(f"项目ID: {project_id}")
+        
         user_info = request.user
+        print(f"用户信息: {user_info}")
         
         # 权限检查
         from app.models.project import Project
         project = Project.query.get(project_id)
         if not project:
+            print(f"项目不存在: {project_id}")
             return jsonify({'code': 404, 'message': '项目不存在'}), 404
         if project.user_id != user_info['user_id']:
+            print(f"权限不足: 用户{user_info['user_id']} 无权访问项目{project_id}")
             return jsonify({'code': 403, 'message': '没有权限访问此项目'}), 403
-        
-        # 获取项目信息以获取项目名
-        project = Project.query.get(project_id)
-        if not project:
-            return jsonify({'code': 404, 'message': '项目不存在'}), 404
 
         # 动态生成用户项目临时路径
         username = user_info['username']
         project_name = project.project_name
+        print(f"用户名: {username}, 项目名: {project_name}")
 
         # 数据目录：用户项目临时目录的first/output（二值化输出）
-        input_dir = os.path.join(
+        binary_data_path = os.path.join(
             Config.INTERMEDIATE_DATA_DIR,
             f"{username}_{project_name}",
             "first",
             "output"
         )
+        print(f"二值化数据目录: {binary_data_path}")
         
-        if not os.path.exists(input_dir):
+        if not os.path.exists(binary_data_path):
+            print(f"二值化输出目录不存在: {binary_data_path}")
             return jsonify({
                 'code': 404,
-                'message': f'二值化输出目录不存在: {input_dir}'
+                'message': f'二值化输出目录不存在: {binary_data_path}'
             }), 404
         
-        # 获取查询参数
-        batch_size = request.args.get('batch_size', 200, type=int)
-        sample_rate = request.args.get('sample_rate', 5, type=int)
+        # 检查目录中是否有二值化文件
+        tiff_files = [f for f in os.listdir(binary_data_path) 
+                      if f.startswith('binary_slice_') and f.endswith('.tiff')]
+        print(f"找到 {len(tiff_files)} 个二值化切片文件")
         
-        # 创建处理器并获取批次信息
-        processor = VOIDataProcessor(input_dir)
+        if not tiff_files:
+            print("二值化数据目录中没有找到切片文件")
+            return jsonify({
+                'code': 400,
+                'message': '二值化数据目录中没有找到切片文件'
+            }), 400
+
+        # 导入VTK处理器
+        import sys
+        import importlib.util
         
-        # 获取批次信息（包含TIFF尺寸信息）
-        # 检查是否有get_unified_batch_info方法，否则使用calculate_total_batches
-        if hasattr(processor, 'get_unified_batch_info'):
-            batch_info = processor.get_unified_batch_info(batch_size)
-        else:
-            # 使用本地的utils版本，确保包含TIFF尺寸信息
-            from app.utils.voi_data_processor import VOIDataProcessor as LocalVOIDataProcessor
-            local_processor = LocalVOIDataProcessor(input_dir)
-            batch_info = local_processor.get_unified_batch_info(batch_size)
+        # 添加hole-analysis目录到Python路径
+        hole_analysis_path = os.path.join(os.path.dirname(__file__), '..', '..', 'hole-analysis')
+        print(f"hole-analysis路径: {hole_analysis_path}")
+        sys.path.insert(0, hole_analysis_path)
         
-        # 记录3D模型构建日志（加载批次数据）
+        print("开始动态导入PyVista处理器模块...")
+        
+        # 导入PyVista处理器
+        module_path_pyvista = os.path.join(hole_analysis_path, '第2步 选择自己感兴趣的区域', 'vtk_surface_processor_pyvista.py')
+        print(f"PyVista处理器模块路径: {module_path_pyvista}")
+        
+        if not os.path.exists(module_path_pyvista):
+            print(f"PyVista处理器模块文件不存在: {module_path_pyvista}")
+            return jsonify({
+                'code': 500,
+                'message': f'PyVista处理器模块文件不存在: {module_path_pyvista}'
+            }), 500
+        
+        spec_pyvista = importlib.util.spec_from_file_location("vtk_surface_processor_pyvista", module_path_pyvista)
+        vtk_module_pyvista = importlib.util.module_from_spec(spec_pyvista)
+        spec_pyvista.loader.exec_module(vtk_module_pyvista)
+        VTKSurfaceProcessorPyVista = vtk_module_pyvista.VTKSurfaceProcessorPyVista
+        print("PyVista处理器模块导入成功")
+        
+        # 创建处理器并生成VTK表面数据
+        print("创建PyVista处理器实例...")
+        processor = VTKSurfaceProcessorPyVista(binary_data_path)
+        
+        # 设置VTK文件输出目录为second/tmp
+        vtk_output_dir = os.path.join(
+            Config.INTERMEDIATE_DATA_DIR,
+            f"{username}_{project_name}",
+            "second",
+            "tmp"
+        )
+        print(f"VTK文件输出目录: {vtk_output_dir}")
+        
+        # 确保输出目录存在
+        os.makedirs(vtk_output_dir, exist_ok=True)
+        print("输出目录创建/确认完成")
+        
+        # 清理旧的VTP文件，确保传输最新文件
+        print("清理旧的VTP文件...")
+        for filename in os.listdir(vtk_output_dir):
+            if filename.endswith('.vtp') and filename.startswith('surface_'):
+                old_file_path = os.path.join(vtk_output_dir, filename)
+                try:
+                    os.remove(old_file_path)
+                    print(f"已删除旧文件: {filename}")
+                except Exception as e:
+                    print(f"删除旧文件失败 {filename}: {e}")
+        
+        # 生成VTK表面数据
+        print("开始生成VTK表面数据...")
+        vtk_file_path = processor.generate_surface(vtk_output_dir)
+        print(f"VTK文件生成成功，路径: {vtk_file_path}")
+        
+        # 验证文件是否确实生成在当前目录
+        if not os.path.exists(vtk_file_path):
+            raise RuntimeError(f"VTK文件生成失败，文件不存在: {vtk_file_path}")
+        
+        # 获取文件信息
+        file_size = os.path.getsize(vtk_file_path)
+        print(f"VTK文件大小: {file_size / (1024*1024):.2f} MB")
+        
+        # 验证文件确实在指定目录中
+        file_dir = os.path.dirname(vtk_file_path)
+        if file_dir != vtk_output_dir:
+            print(f"警告: 生成的文件不在预期目录中")
+            print(f"预期目录: {vtk_output_dir}")
+            print(f"实际目录: {file_dir}")
+        
+        # 列出当前目录中的所有VTP文件
+        current_vtp_files = [f for f in os.listdir(vtk_output_dir) if f.endswith('.vtp')]
+        print(f"当前目录中的VTP文件: {current_vtp_files}")
+        
+        # 记录3D模型构建成功日志
         create_system_log(
             operation_type='3D_MODEL_CONSTRUCTION',
             user_id=user_info['user_id'],
@@ -619,19 +697,26 @@ def get_voi_batch_info(project_id):
             status='success'
         )
         
-        return jsonify({
-            'code': 200,
-            'message': '批次信息获取成功',
-            'data': batch_info
-        }), 200
+        # 直接返回VTK文件，优化大文件传输
+        print("开始返回VTK文件给前端...")
+        return send_file(
+            vtk_file_path,
+            as_attachment=True,
+            download_name=os.path.basename(vtk_file_path),
+            mimetype='application/octet-stream',
+            # 大文件传输优化
+            conditional=True,  # 支持条件请求（断点续传）
+            etag=False,        # 禁用ETag计算，减少CPU开销
+            max_age=0          # 不缓存，确保获取最新文件
+        )
         
     except Exception as e:
         import traceback
         error_trace = traceback.format_exc()
-        print(f"获取VOI批次信息时发生错误: {str(e)}")
+        print(f"生成3D模型VTK数据时发生错误: {str(e)}")
         print(f"错误堆栈: {error_trace}")
         
-        # 记录获取VOI批次信息失败日志
+        # 记录3D模型构建失败日志
         try:
             create_system_log(
                 operation_type='3D_MODEL_CONSTRUCTION',
@@ -640,11 +725,11 @@ def get_voi_batch_info(project_id):
                 status='failed'
             )
         except Exception as log_error:
-            print(f"记录获取VOI批次信息失败日志失败: {str(log_error)}")
+            print(f"记录3D模型构建失败日志失败: {str(log_error)}")
         
         return jsonify({
             'code': 500,
-            'message': f'获取VOI批次信息时发生错误: {str(e)}'
+            'message': f'生成3D模型VTK数据时发生错误: {str(e)}'
         }), 500
 
 

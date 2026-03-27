@@ -97,17 +97,17 @@
                 <el-button
                   :disabled="loadingBatchData"
                   type="primary"
-                  @click="loadBatchData"
+                  @click="load3DModelData"
                 >
-                  {{ loadingBatchData ? '正在加载...' : voiDataLoaded ? '重新加载数据' : '加载批次数据' }}
+                  {{ loadingBatchData ? '正在构建...' : voiDataLoaded ? '重新构建模型' : '加载数据构建3D模型' }}
                 </el-button>
               </div>
 
               <!-- 3D可视化组件 -->
               <div class="voi-3d-container">
-                <Voi3DViewer
+                <VtkMedicalViewer
                   v-if="voiDataLoaded"
-                  ref="voi3dviewer"
+                  ref="vtkviewer"
                   :project-id="String(project.id)"
                   :voi-bounds="voiBounds"
                   @model-rendered="handleModelRendered"
@@ -115,7 +115,7 @@
                 />
                 <div v-else class="no-data-prompt">
                   <i class="el-icon-picture-outline" />
-
+                  <p>点击"加载数据构建3D模型"按钮开始构建3D可视化</p>
                 </div>
               </div>
 
@@ -334,13 +334,13 @@
 import { getProject } from '@/api/project'
 import { executeBinaryConversion, executeHoleDetection, executeDataPreprocessing, executeTargetHoleAnalysis } from '@/api/hole-analysis'
 import { getToken } from '@/utils/auth'
-import Voi3DViewer from '@/components/Voi3DViewer.vue'
+import VtkMedicalViewer from '@/components/VtkMedicalViewer.vue'
 import MaxHolo3DViewer from '@/components/MaxHolo3DViewer.vue'
 
 export default {
   name: 'ProjectDetail',
   components: {
-    Voi3DViewer,
+    VtkMedicalViewer,
     MaxHolo3DViewer
   },
   data() {
@@ -1001,8 +1001,8 @@ export default {
       this.$message.success('数据导出成功')
     },
 
-    // 加载批次数据
-    async loadBatchData() {
+    // 加载3D模型数据
+    async load3DModelData() {
       if (!this.stepStatus[0]) {
         this.$message.warning('请先完成图像二值化步骤')
         return
@@ -1015,16 +1015,16 @@ export default {
 
       try {
         this.loadingBatchData = true
-        this.$message.info('正在加载批次数据...')
+        this.$message.info('正在构建3D模型，请稍候...')
 
         // 设置VOI数据加载状态为true，显示3D可视化组件
         this.voiDataLoaded = true
 
-        // 等待Voi3DViewer组件渲染完成
+        // 等待VtkMedicalViewer组件渲染完成
         await this.$nextTick()
 
-        // 调用Voi3DViewer组件的批次数据加载方法
-        if (this.$refs.voi3dviewer) {
+        // 直接调用后端API获取VTK数据
+        if (this.$refs.vtkviewer) {
           // 设置VOI边界信息
           this.voiBounds = {
             xMin: 0,
@@ -1035,8 +1035,8 @@ export default {
             zMax: 999
           }
 
-          // 调用统一批次数据加载方法
-          const loadResult = await this.$refs.voi3dviewer.loadBatchData()
+          // 直接调用VTK组件的模型加载方法
+          const loadResult = await this.$refs.vtkviewer.load3DModelData()
 
           // 只有在3D模型真正构建成功后才显示成功提示
           if (loadResult === true) {
@@ -1045,11 +1045,11 @@ export default {
             throw new Error('3D模型构建失败')
           }
         } else {
-          throw new Error('3D可视化组件初始化失败')
+          throw new Error('VTK可视化组件初始化失败')
         }
       } catch (error) {
-        console.error('加载批次数据失败:', error)
-        this.$message.error('加载批次数据失败，请重试')
+        console.error('构建3D模型失败:', error)
+        this.$message.error('构建3D模型失败，请重试')
         // 如果加载失败，重置状态
         this.voiDataLoaded = false
       } finally {
@@ -1060,12 +1060,12 @@ export default {
 
     // 检查VOI选择是否已确认
     isVOIConfirmed() {
-      if (!this.$refs.voi3dviewer) {
+      if (!this.$refs.vtkviewer) {
         return false
       }
 
-      // 检查Voi3DViewer组件中是否有已确认的选择区域
-      return this.$refs.voi3dviewer.selectedBounds !== null
+      // 检查VtkMedicalViewer组件中是否有已确认的选择区域
+      return this.$refs.vtkviewer.selectedBounds !== null
     },
 
     // 处理3D模型渲染成功事件

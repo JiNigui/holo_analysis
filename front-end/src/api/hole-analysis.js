@@ -50,6 +50,22 @@ export function checkVOIStatus(projectId) {
   })
 }
 
+// 获取3D模型的VTK数据
+export function get3DVtkData(projectId) {
+  return request({
+    url: `/hole-analysis/projects/${projectId}/3d_data`,
+    method: 'get',
+    responseType: 'blob', // 重要：设置为blob以接收二进制文件
+    timeout: 600000, // 10分钟超时，处理大文件需要更多时间
+    // 大文件传输优化
+    onDownloadProgress: (progressEvent) => {
+      // 可以在这里添加进度显示逻辑
+      const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total)
+      console.log(`VTK文件下载进度: ${percentCompleted}%`)
+    }
+  })
+}
+
 // 确认VOI区域选择
 export function confirmVOISelection(projectId, selectionBounds) {
   return request({

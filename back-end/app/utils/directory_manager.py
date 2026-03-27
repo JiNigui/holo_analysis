@@ -30,6 +30,7 @@ class DirectoryManager:
         # 定义完整的目录结构
         directories = [
             'first/input', 'first/output',
+            'second/tmp',
             'third/selected_tiff_slices', 
             'fourth/masks', 'fourth/output',
             'fifth/output',

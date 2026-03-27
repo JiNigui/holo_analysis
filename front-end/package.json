@@ -15,6 +15,7 @@
     "start-all": "concurrently \"npm run dev\" \"cd ../back-end && python run.py\""
   },
   "dependencies": {
+    "@kitware/vtk.js": "^24.15.0",
     "axios": "^1.13.1",
     "core-js": "3.6.5",
     "element-ui": "^2.15.14",
