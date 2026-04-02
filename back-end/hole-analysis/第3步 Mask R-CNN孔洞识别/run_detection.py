@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
 """
-孔洞检测综合脚本
+孔洞检测综合脚本 (基于 U-Net 与 DeepLabV3+ 的双模型融合架构)
 
-整合UNet和Mask R-CNN的检测流程，一次性完成：
-1. UNet检测 - 对边缘部分和小孔洞的检测效果更好
-2. Mask R-CNN检测 - 对大空洞的检测比较好
-3. 模型融合 - 结合两者的优势
+整合 U-Net 和 DeepLabV3+ 的检测流程，一次性完成批量推理：
+1. U-Net 推理 - 高分辨率局部特征提取，保留极微小气孔
+2. DeepLabV3+ 推理 - 多尺度全局语境感知，提供宏观高置信度底座
+3. 条件补充融合 - 通过“双向物理尺度过滤”截断误检，并融合两者优势
+4. 形态学后处理 - 先闭后开，平滑边界并还原物理形貌
 """
 
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import warnings
-warnings.filterwarnings("ignore", category=FutureWarning)
-import os
 import torch
 import concurrent.futures
 import numpy as np
@@ -22,165 +20,176 @@ import cv2
 from tqdm import tqdm
 import re
 import segmentation_models_pytorch as smp
-from detectron2.engine import DefaultPredictor
-from detectron2.config import get_cfg
-from detectron2 import model_zoo
 
+warnings.filterwarnings("ignore", category=FutureWarning)
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
+# 将当前脚本目录加入路径
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-class UNetDetector:
-    def __init__(self, model_path, img_size=(512, 512), threshold=0.3):
+
+class DualModelDetector:
+    def __init__(self, unet_path, deeplab_path, device, img_size=(512, 512), threshold=0.3):
+        self.device = device
         self.img_size = img_size
         self.threshold = threshold
-        self.model = self._initialize_model(model_path)
 
-    def _initialize_model(self, model_path):
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # 物理尺度过滤参数 (与 fusion_new 保持一致)
+        self.min_area_tau = 3
+        self.max_area_tau = 50
+
+        print("正在加载 U-Net 模型...")
+        self.unet = self._load_model(unet_path)
+        print("正在加载 DeepLabV3+ 模型...")
+        self.deeplab = self._load_model(deeplab_path)
+
+    def _load_model(self, model_path):
         model = smp.Unet(
             encoder_name="resnet34",
             encoder_weights=None,
             in_channels=3,
             classes=1
-        ).to(device)
-        model.load_state_dict(torch.load(model_path, map_location=device, weights_only=False))
+        ).to(self.device) if 'unet' in model_path.lower() else \
+            smp.DeepLabV3Plus(
+                encoder_name="resnet34",
+                encoder_weights=None,
+                in_channels=3,
+                classes=1
+            ).to(self.device)
+
+        model.load_state_dict(torch.load(model_path, map_location=self.device, weights_only=False))
         model.eval()
         return model
 
     def preprocess(self, img):
-        img = np.array(img, dtype=np.float32)
-        img = cv2.resize(img, self.img_size)
-        img = np.stack([img] * 3, axis=-1)
-        img = img / 255.0
+        """输入预处理：调整尺寸、通道扩展、标准化"""
+        img_resized = cv2.resize(img, self.img_size)
+        img_stack = np.stack([img_resized] * 3, axis=-1)
+        img_norm = img_stack / 255.0
         mean = np.array([0.485, 0.456, 0.406])
         std = np.array([0.229, 0.224, 0.225])
-        img = (img - mean) / std
-        img = img.transpose(2, 0, 1)
-        return torch.tensor(img, dtype=torch.float32).unsqueeze(0)
+        img_norm = (img_norm - mean) / std
+        img_tensor = img_norm.transpose(2, 0, 1)
+        return torch.tensor(img_tensor, dtype=torch.float32).unsqueeze(0).to(self.device)
 
-    def detect(self, img):
-        if len(img.shape) == 3:
-            img = img[:, :, 0]
-        orig_size = (img.shape[1], img.shape[0])
+    def detect_and_fuse(self, img_gray):
+        """单张图像的推理与融合核心逻辑"""
+        orig_size = (img_gray.shape[1], img_gray.shape[0])
+        input_tensor = self.preprocess(img_gray)
 
-        input_tensor = self.preprocess(img).to(next(self.model.parameters()).device)
-
+        # 1. 双模型推理
         with torch.no_grad():
-            logits = self.model(input_tensor)
-            pred = torch.sigmoid(logits).cpu().squeeze().numpy()
+            logits_unet = self.unet(input_tensor)
+            pred_unet = torch.sigmoid(logits_unet).cpu().squeeze().numpy()
 
-        pred_bin = (pred > self.threshold).astype(np.uint8) * 255
-        pred_bin = cv2.resize(pred_bin, orig_size)
-        return pred_bin
+            logits_deeplab = self.deeplab(input_tensor)
+            pred_deeplab = torch.sigmoid(logits_deeplab).cpu().squeeze().numpy()
 
+        # 2. 尺寸还原与二值化基础掩膜
+        pred_unet_resized = cv2.resize(pred_unet, orig_size)
+        pred_deeplab_resized = cv2.resize(pred_deeplab, orig_size)
 
-class MaskRCNNDetector:
-    def __init__(self, model_path, confidence_threshold=0.9, num_classes=1):
-        self.predictor = self._initialize_predictor(model_path, confidence_threshold, num_classes)
+        hole_unet = (pred_unet_resized > self.threshold)
+        hole_deeplab = (pred_deeplab_resized > self.threshold)
 
-    def _initialize_predictor(self, model_path, confidence_threshold, num_classes):
-        cfg = get_cfg()
-        cfg.merge_from_file(model_zoo.get_config_file("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml"))
-        cfg.MODEL.WEIGHTS = model_path
-        cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = confidence_threshold
-        cfg.MODEL.ROI_HEADS.NUM_CLASSES = num_classes
-        cfg.MODEL.DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-        if torch.cuda.is_available():
-            cfg.MODEL.PIXEL_MEAN = [103.530, 116.280, 123.675]
-        return DefaultPredictor(cfg)
+        # 3. 差异区域提取 (U-Net独有区域)
+        diff_mask = hole_unet & (~hole_deeplab)
 
-    def detect(self, img):
-        if len(img.shape) == 2:
-            img = np.expand_dims(img, axis=-1)
+        # 4. 双向物理尺度过滤
+        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(diff_mask.astype(np.uint8),
+                                                                                connectivity=8)
+        supp_mask = np.zeros_like(diff_mask, dtype=bool)
 
-        predictions = self.predictor(img)
-        masks = predictions["instances"].pred_masks.cpu().numpy()
+        for i in range(1, num_labels):
+            area = stats[i, cv2.CC_STAT_AREA]
+            if self.min_area_tau <= area <= self.max_area_tau:
+                supp_mask[labels == i] = True
 
-        mask_only_img = np.zeros(img.shape[:2], dtype=np.uint8)
-        for mask in masks:
-            mask = mask.astype(np.uint8) * 255
-            mask_only_img[mask == 255] = 255
+        # 5. 条件补充融合
+        fused_mask = hole_deeplab | supp_mask
 
-        return mask_only_img
+        # 6. 形态学后处理 (先闭后开)
+        fused_img_255 = (fused_mask.astype(np.uint8) * 255)
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        closed_mask = cv2.morphologyEx(fused_img_255, cv2.MORPH_CLOSE, kernel)
+        final_morph_mask = cv2.morphologyEx(closed_mask, cv2.MORPH_OPEN, kernel)
+
+        # 7. 格式对齐 (根据 fusion_new.py 逻辑，孔洞=0，背景=255)
+        final_output = np.where(final_morph_mask == 255, 0, 255).astype(np.uint8)
+        return final_output
 
 
 class HoleDetectionProcessor:
-    def __init__(self, unet_model_path, maskrcnn_model_path, input_folder, output_folder,
-                 unet_threshold=0.3, maskrcnn_confidence=0.9, img_size=(512, 512)):
+    def __init__(self, unet_path, deeplab_path, input_folder, output_folder, img_size=(512, 512)):
         self.input_folder = input_folder
         self.output_folder = output_folder
-
         os.makedirs(output_folder, exist_ok=True)
 
-        self.unet_detector = UNetDetector(unet_model_path, img_size, unet_threshold)
-        self.maskrcnn_detector = MaskRCNNDetector(maskrcnn_model_path, maskrcnn_confidence)
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"使用计算设备: {self.device}")
 
-        self.image_files = [f for f in os.listdir(input_folder) if f.endswith('.tiff')]
-        self.image_files = sorted(self.image_files, key=lambda x: int(re.findall(r'\d+', x)[-1]))
+        self.detector = DualModelDetector(unet_path, deeplab_path, self.device, img_size)
+
+        # 读取并按切片序号排序
+        self.image_files = [f for f in os.listdir(input_folder) if f.endswith(('.tiff', '.tif'))]
+        self.image_files = sorted(self.image_files,
+                                  key=lambda x: int(re.findall(r'\d+', x)[-1]) if re.findall(r'\d+', x) else 0)
 
         self.success_count = 0
         self.fail_count = 0
-
-    def fuse_masks(self, unet_mask, maskrcnn_mask):
-        unet_mask = unet_mask.astype(np.uint8)
-        maskrcnn_mask = maskrcnn_mask.astype(np.uint8)
-
-        unet_binary = (unet_mask > 127).astype(np.uint8)
-        maskrcnn_binary = (maskrcnn_mask > 127).astype(np.uint8)
-
-        fused_mask = unet_binary | maskrcnn_binary
-
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        fused_mask = cv2.morphologyEx(fused_mask, cv2.MORPH_CLOSE, kernel)
-        fused_mask = cv2.morphologyEx(fused_mask, cv2.MORPH_OPEN, kernel)
-
-        return fused_mask * 255
 
     def process_single_image(self, image_file):
         try:
             image_path = os.path.join(self.input_folder, image_file)
             img = tifffile.imread(image_path)
 
-            if len(img.shape) == 3:
-                img = img[:, :, 0]
+            # 统一转为灰度图
+            if len(img.shape) == 3 and img.shape[2] == 3:
+                img_gray = np.mean(img, axis=2).astype(img.dtype)
+            elif len(img.shape) == 3:
+                img_gray = img[0] if img.shape[0] < img.shape[-1] else img[:, :, 0]
+            else:
+                img_gray = img
 
             base_name = os.path.splitext(image_file)[0]
 
-            unet_mask = self.unet_detector.detect(img)
+            # 核心融合检测
+            fused_mask = self.detector.detect_and_fuse(img_gray)
 
-            if len(img.shape) == 2:
-                img_3d = np.expand_dims(img, axis=-1)
-            else:
-                img_3d = img
-
-            maskrcnn_mask = self.maskrcnn_detector.detect(img_3d)
-
-            if unet_mask.shape != maskrcnn_mask.shape:
-                maskrcnn_mask = cv2.resize(maskrcnn_mask, (unet_mask.shape[1], unet_mask.shape[0]))
-
-            fused_mask = self.fuse_masks(unet_mask, maskrcnn_mask)
+            # 保存结果
             fused_output_path = os.path.join(self.output_folder, f"{base_name}_fused_mask.tiff")
             tifffile.imwrite(fused_output_path, fused_mask)
-            self.success_count += 1
 
             return True, image_file
 
         except Exception as e:
-            print(f"处理图像 {image_file} 时出错: {str(e)}")
-            self.fail_count += 1
+            print(f"\n处理图像 {image_file} 时出错: {str(e)}")
             return False, image_file
 
     def process_batch(self, max_workers=None):
+        if not self.image_files:
+            print("输入目录中没有找到 TIFF 文件。")
+            return
+
+        # 如果使用 GPU，建议控制并发数以防显存 OOM
         if max_workers is None:
-            max_workers = min(4, os.cpu_count() or 4)
+            max_workers = 2 if torch.cuda.is_available() else min(4, os.cpu_count() or 4)
 
-        print(f"开始处理 {len(self.image_files)} 张图像，使用 {max_workers} 个线程...")
+        print(f"\n开始处理 {len(self.image_files)} 张图像，使用 {max_workers} 个线程...")
 
+        # 进度条与多线程处理
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            results = list(tqdm(executor.map(self.process_single_image, self.image_files), total=len(self.image_files)))
+            futures = [executor.submit(self.process_single_image, f) for f in self.image_files]
+            for future in tqdm(concurrent.futures.as_completed(futures), total=len(self.image_files)):
+                success, _ = future.result()
+                if success:
+                    self.success_count += 1
+                else:
+                    self.fail_count += 1
 
-        print(f"\n=== 检测完成 ===")
+        print(f"\n=== 批量分割检测完成 ===")
         print(f"成功: {self.success_count}, 失败: {self.fail_count}")
+        print(f"结果已保存至: {self.output_folder}")
 
 
 def main():
@@ -188,55 +197,47 @@ def main():
     
     # 创建命令行参数解析器
     parser = argparse.ArgumentParser(description='孔洞检测综合脚本')
-    parser.add_argument('--input-dir', required=True, help='输入目录路径（包含TIFF文件）')
-    parser.add_argument('--output-dir', required=True, help='输出目录路径（保存掩码文件）')
-    parser.add_argument('--unet-model', default='unet.pth', help='UNet模型文件路径')
-    parser.add_argument('--maskrcnn-model', default='model_final.pth', help='Mask R-CNN模型文件路径')
-    parser.add_argument('--unet-threshold', type=float, default=0.3, help='UNet检测阈值')
-    parser.add_argument('--maskrcnn-confidence', type=float, default=0.9, help='Mask R-CNN置信度阈值')
+    parser.add_argument('--input-dir', required=True, help='输入目录路径')
+    parser.add_argument('--output-dir', required=True, help='输出目录路径')
+    parser.add_argument('--unet-model', required=True, help='UNet模型文件路径')
+    parser.add_argument('--deeplab-model', required=True, help='DeepLabV3+模型文件路径')
     
     args = parser.parse_args()
     
-    # 使用绝对路径
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    unet_model_path = os.path.abspath(args.unet_model)
-    maskrcnn_model_path = os.path.abspath(args.maskrcnn_model)
-    input_folder = os.path.abspath(args.input_dir)
-    output_folder = os.path.abspath(args.output_dir)
-    
-    print("=== 孔洞检测综合配置 ===")
-    print(f"UNet模型: {unet_model_path}")
-    print(f"Mask R-CNN模型: {maskrcnn_model_path}")
-    print(f"输入目录: {input_folder}")
-    print(f"输出目录: {output_folder}")
-    print(f"UNet阈值: {args.unet_threshold}")
-    print(f"Mask R-CNN置信度: {args.maskrcnn_confidence}")
-    print("========================\n")
+    # 使用命令行参数
+    unet_model_path = args.unet_model
+    deeplab_model_path = args.deeplab_model
+    input_folder = args.input_dir
+    output_folder = args.output_dir
 
-    # 检查文件存在性
+    print("=== 孔洞批量检测综合配置 (融合版) ===")
+    print(f"U-Net 权重路径: {unet_model_path}")
+    print(f"DeepLabV3+ 权重路径: {deeplab_model_path}")
+    print(f"输入目录 (VOI): {input_folder}")
+    print(f"输出目录 (检测): {output_folder}")
+    print("=====================================\n")
+
     if not os.path.exists(unet_model_path):
-        print(f"错误：UNet模型不存在: {unet_model_path}")
+        print(f"错误：U-Net 模型文件不存在: {unet_model_path}")
         return
 
-    if not os.path.exists(maskrcnn_model_path):
-        print(f"错误：Mask R-CNN模型不存在: {maskrcnn_model_path}")
+    if not os.path.exists(deeplab_model_path):
+        print(f"错误：DeepLabV3+ 模型文件不存在: {deeplab_model_path}")
         return
 
     if not os.path.exists(input_folder):
         print(f"错误：输入目录不存在: {input_folder}")
+        print("请先运行 VOI 提取脚本 (run_voi.py)")
         return
 
-    # 创建处理器并执行
     processor = HoleDetectionProcessor(
-        unet_model_path=unet_model_path,
-        maskrcnn_model_path=maskrcnn_model_path,
+        unet_path=unet_model_path,
+        deeplab_path=deeplab_model_path,
         input_folder=input_folder,
         output_folder=output_folder,
-        unet_threshold=args.unet_threshold,
-        maskrcnn_confidence=args.maskrcnn_confidence,
         img_size=(512, 512)
     )
-    
+
     processor.process_batch()
 
 

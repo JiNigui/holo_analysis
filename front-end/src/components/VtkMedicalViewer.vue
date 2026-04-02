@@ -492,7 +492,7 @@ export default {
       console.log('Three.js渲染器初始化，容器尺寸:', width, 'x', height)
 
       this.scene = new THREE.Scene()
-      this.scene.background = new THREE.Color(0xffffff)
+      this.scene.background = new THREE.Color(0xf5f7fa)
 
       this.camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100000)
       this.camera.position.set(0, 0, 1000)
@@ -502,9 +502,13 @@ export default {
       this.threeRenderer.setPixelRatio(window.devicePixelRatio)
       container.appendChild(this.threeRenderer.domElement)
 
-      // 纯环境光，避免方向光在透明模型上产生白色高光
-      const ambientLight = new THREE.AmbientLight(0xffffff, 1.0)
+      // 以环境光为主：均匀照明，旋转时不产生高光跳变
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.85)
       this.scene.add(ambientLight)
+      // 极弱方向光：仅提供轻微立体深度感，不足以产生明显高光
+      const dirLight1 = new THREE.DirectionalLight(0xffffff, 0.25)
+      dirLight1.position.set(1.5, 2.0, 1.5)
+      this.scene.add(dirLight1)
 
       this.controls = new OrbitControls(this.camera, this.threeRenderer.domElement)
       this.controls.enableDamping = true
@@ -584,12 +588,13 @@ export default {
               this.modelMesh.material.dispose()
             }
 
+            // Ghost渲染：低透明度看穿实体→定位内部孔洞，DoubleSide渲染孔洞内壁
             const material = new THREE.MeshLambertMaterial({
-              color: 0x4488cc,
-              side: THREE.FrontSide,
+              color: 0x1565c0,   // 深蓝，与白色背景形成对比
+              side: THREE.DoubleSide, // 内外面都渲染，孔洞内壁可见
               transparent: true,
-              opacity: 0.4,
-              depthWrite: false
+              opacity: 0.35,     // 低不透明度：透过实体可见内部孔洞位置
+              depthWrite: false  // 关闭深度写入：多层透明面叠加时无遮挡错误
             })
 
             this.modelMesh = new THREE.Mesh(geometry, material)
@@ -799,7 +804,7 @@ export default {
 
 .loading-spinner {
   text-align: center;
-  color: white;
+  color: #1565c0;
 }
 
 .loading-spinner i {

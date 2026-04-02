@@ -147,14 +147,14 @@ def run_hole_detection(input_dir=None, output_dir=None):
         print(f"识别脚本路径: {script_path}")
         
         # 构建Python命令（在holo_detectron2环境中执行），传递路径参数
-        unet_model_path = current_dir / "unet.pth"
-        maskrcnn_model_path = current_dir / "model_final.pth"
+        unet_model_path = current_dir / "best_unet.pth"
+        deeplab_model_path = current_dir / "deeplabv3plus.pth"
     
         python_cmd = [env_python, str(script_path), 
                      f"--input-dir={input_dir}",
                      f"--output-dir={output_dir}",
                      f"--unet-model={unet_model_path}",
-                     f"--maskrcnn-model={maskrcnn_model_path}"]
+                     f"--deeplab-model={deeplab_model_path}"]
         
         # 执行孔洞识别脚本
         print("开始执行孔洞识别...")

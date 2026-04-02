@@ -90,7 +90,7 @@ export function executeHoleDetection(projectId) {
   })
 }
 
-// 执行数据预处理（第四步）
+// 执行数据预处理（第四步）- 后端返回 VTP 文件（blob）
 export function executeDataPreprocessing(projectId) {
   return request({
     url: '/hole-analysis/preprocess',
@@ -98,7 +98,8 @@ export function executeDataPreprocessing(projectId) {
     data: {
       project_id: projectId
     },
-    timeout: 1800000 // 30分钟超时，数据预处理需要时间
+    responseType: 'blob', // 接收后端返回的 VTP 二进制文件
+    timeout: 3600000 // 60分钟超时（主处理+形态清洗）
   })
 }
 
@@ -156,5 +157,17 @@ export function executeMaxHole3DView(projectId) {
     },
     responseType: 'blob',
     timeout: 1800000
+  })
+}
+
+// 执行形态学分析（第六步）
+export function executeMorphologicalAnalysis(projectId) {
+  return request({
+    url: '/hole-analysis/morphological-analysis',
+    method: 'post',
+    data: {
+      project_id: projectId
+    },
+    timeout: 3600000 // 1小时超时，形态学分析需要较长时间
   })
 }

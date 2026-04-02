@@ -204,7 +204,7 @@
             >
               执行数据预处理
             </el-button>
-            
+
             <!-- 数据预处理等待提示 -->
             <div v-if="dataPreprocessingLoading" class="data-preprocessing-loading" style="margin-top: 15px;">
               <el-alert
@@ -216,6 +216,14 @@
                 <i class="el-icon-loading" style="margin-right: 5px;" />
                 系统正在处理数据，这可能需要几分钟时间
               </el-alert>
+            </div>
+
+            <!-- 3D孔洞预览（形态清洗后） -->
+            <div v-if="showStep4Viewer" style="margin-top: 20px;">
+              <div style="font-weight: bold; margin-bottom: 8px; color: #303133;">孔洞3D预览（形态清洗后）</div>
+              <div style="height: 65vh; border: 1px solid #dcdfe6; border-radius: 4px; overflow: hidden;">
+                <Step4Viewer ref="step4viewer" />
+              </div>
             </div>
           </div>
           <!-- 第五步：寻找目标孔洞 -->
@@ -286,23 +294,122 @@
           </div>
           <!-- 第六步：形态学分析 -->
           <div v-else-if="activeStep === 5">
-            <h3>第六步：形态学分析</h3>
+            <h3>第六步：形态学分析与智能鉴定</h3>
             <div class="step-description">
-              <p>对目标孔洞进行形态学特征分析，生成分析报告。</p>
+              <p>对目标孔洞进行形态学特征分析，生成智能鉴定报告和详细参数矩阵。</p>
             </div>
-            <el-button
-              type="primary"
-              :disabled="!stepStatus[4]"
-              @click="executeStep(5)"
-            >
-              执行形态学分析
-            </el-button>
-            <div v-if="stepStatus[5]" class="analysis-result">
-              <h4>分析结果</h4>
-              <el-table :data="analysisData" style="width: 100%">
-                <el-table-column prop="feature" label="特征" />
-                <el-table-column prop="value" label="数值" />
-              </el-table>
+
+            <!-- 执行按钮 + 下载按钮 -->
+            <div class="step-button" style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+              <el-button
+                type="primary"
+                :disabled="!stepStatus[4] || isAnalyzing"
+                :loading="isAnalyzing"
+                @click="executeMorphologicalAnalysis"
+              >
+                {{ isAnalyzing ? '分析中...' : '执行形态学分析' }}
+              </el-button>
+              <el-button
+                v-if="stepStatus[5]"
+                type="success"
+                @click="downloadBothFiles"
+              >
+                <i class="el-icon-download" /> 下载分析报告
+              </el-button>
+            </div>
+
+            <!-- 结果显示区域 -->
+            <div v-if="stepStatus[5]" class="morphological-analysis-result">
+              <h4>形态学分析结果</h4>
+
+              <!-- 文件切换标签 -->
+              <div class="file-switcher">
+                <el-button-group>
+                  <el-button
+                    :type="activeFileType === 'excel' ? 'primary' : 'default'"
+                    @click="handleFileTypeSwitch('excel')"
+                  >
+                    Excel报告
+                  </el-button>
+                  <el-button
+                    :type="activeFileType === 'csv' ? 'primary' : 'default'"
+                    @click="handleFileTypeSwitch('csv')"
+                  >
+                    CSV报告
+                  </el-button>
+                </el-button-group>
+              </div>
+
+              <!-- Excel 内容展示 -->
+              <div v-if="activeFileType === 'excel'" class="excel-content" style="margin-top: 15px;">
+                <div v-if="fileContents.excel.parsedData && fileContents.excel.parsedData.sheets && fileContents.excel.parsedData.sheets.length">
+                  <!-- 多 Sheet 切换 -->
+                  <div v-if="fileContents.excel.parsedData.sheets.length > 1" style="margin-bottom: 10px;">
+                    <el-radio-group v-model="activeSheetIndex" size="small">
+                      <el-radio-button
+                        v-for="(sheet, idx) in fileContents.excel.parsedData.sheets"
+                        :key="idx"
+                        :label="idx"
+                      >{{ sheet.name }}</el-radio-button>
+                    </el-radio-group>
+                  </div>
+                  <!-- 表格 -->
+                  <div class="analysis-table-wrap">
+                    <table v-if="activeSheetData" class="analysis-table">
+                      <thead>
+                        <tr>
+                          <th v-for="(header, hIdx) in activeSheetData.headers" :key="hIdx">{{ header }}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="(row, rIdx) in activeSheetData.rows" :key="rIdx">
+                          <td v-for="(cell, cIdx) in row" :key="cIdx">{{ cell }}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <div style="margin-top: 8px; font-size: 12px; color: #666;">
+                    共 {{ activeSheetData ? activeSheetData.rows.length : 0 }} 行数据
+                  </div>
+                </div>
+                <el-alert v-else title="Excel 文件解析失败或暂无数据" type="warning" :closable="false" show-icon />
+              </div>
+
+              <!-- CSV 内容展示 -->
+              <div v-if="activeFileType === 'csv'" class="csv-content" style="margin-top: 15px;">
+                <div v-if="fileContents.csv.parsedData && fileContents.csv.parsedData.headers && fileContents.csv.parsedData.headers.length">
+                  <div class="analysis-table-wrap">
+                    <table class="analysis-table">
+                      <thead>
+                        <tr>
+                          <th v-for="(header, hIdx) in fileContents.csv.parsedData.headers" :key="hIdx">{{ header }}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="(row, rIdx) in fileContents.csv.parsedData.rows" :key="rIdx">
+                          <td v-for="(cell, cIdx) in row" :key="cIdx">{{ cell }}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <div style="margin-top: 8px; font-size: 12px; color: #666;">
+                    共 {{ fileContents.csv.parsedData.totalRows }} 行数据（含表头）
+                  </div>
+                </div>
+                <el-alert v-else title="CSV 文件解析失败或暂无数据" type="warning" :closable="false" show-icon />
+              </div>
+
+              <!-- 分析摘要 -->
+              <div v-if="morphologicalAnalysisData" class="analysis-summary" style="margin-top: 20px;">
+                <el-alert
+                  :title="`分析完成 - ${morphologicalAnalysisData.message}`"
+                  type="success"
+                  :closable="false"
+                  show-icon
+                >
+                  <p>生成文件：智能鉴定与三维全参数矩阵.xlsx、单体孔洞参数明细.csv</p>
+                </el-alert>
+              </div>
             </div>
           </div>
         </div>
@@ -312,17 +419,20 @@
 </template>
 
 <script>
+import * as XLSX from 'xlsx'
 import { getProject } from '@/api/project'
-import { executeBinaryConversion, executeHoleDetection, executeDataPreprocessing, executeTargetHoleAnalysis, getTargetHoleProgress } from '@/api/hole-analysis'
+import { executeBinaryConversion, executeHoleDetection, executeDataPreprocessing, executeTargetHoleAnalysis, getTargetHoleProgress, executeMorphologicalAnalysis } from '@/api/hole-analysis'
 import { getToken } from '@/utils/auth'
 import VtkMedicalViewer from '@/components/VtkMedicalViewer.vue'
 import HoleCutViewer3D from '@/components/HoleCutViewer3D.vue'
+import Step4Viewer from '@/components/Step4Viewer.vue'
 
 export default {
   name: 'ProjectDetail',
   components: {
     VtkMedicalViewer,
-    HoleCutViewer3D
+    HoleCutViewer3D,
+    Step4Viewer
   },
   data() {
     return {
@@ -351,9 +461,28 @@ export default {
       operationLogs: [], // 操作日志
       holeDetectionLoading: false, // 孔洞识别是否正在进行中
       dataPreprocessingLoading: false, // 数据预处理是否正在进行中
+      showStep4Viewer: false, // 是否显示第四步3D预览
       targetHoleAnalysisLoading: false, // 目标孔洞分析是否正在进行中
       targetHoleResultImage: null, // 目标孔洞分析结果图像URL
       show3DViewerDialog: false, // 是否显示3D视图对话框
+      // 第六步相关数据
+      isAnalyzing: false, // 是否正在执行形态学分析
+      activeFileType: 'excel', // 当前显示的文件类型：excel 或 csv
+      activeSheetIndex: 0, // 当前选中的Excel Sheet索引
+      morphologicalAnalysisData: null, // 形态学分析结果数据
+      // 文件内容数据
+      fileContents: {
+        excel: {
+          content: null,
+          parsedData: null,
+          filename: ''
+        },
+        csv: {
+          content: null,
+          parsedData: null,
+          filename: ''
+        }
+      },
 
       // 实时进度显示相关数据
       showProgressBar: false, // 是否显示进度条
@@ -385,6 +514,11 @@ export default {
     },
     totalSteps() {
       return this.stepNames.length
+    },
+    activeSheetData() {
+      const sheets = this.fileContents.excel.parsedData && this.fileContents.excel.parsedData.sheets
+      if (!sheets || sheets.length === 0) return null
+      return sheets[this.activeSheetIndex] || null
     }
   },
   created() {
@@ -509,6 +643,9 @@ export default {
         } else if (stepIndex === 4) {
           // 第五步：目标孔洞分析
           await this.executeTargetHoleAnalysis()
+        } else if (stepIndex === 5) {
+          // 第六步：形态学分析
+          await this.executeMorphologicalAnalysis()
         } else {
           // 其他步骤暂时保持模拟
           await new Promise(resolve => setTimeout(resolve, 2000))
@@ -666,48 +803,32 @@ export default {
         // 显示等待提示
         this.dataPreprocessingLoading = true
 
-        // 调用后端API
+        // 调用后端API（返回 blob：VTP 文件）
         const response = await executeDataPreprocessing(projectId)
 
-        if (response && response.code === 200) {
-          // 检查后端实际执行状态
-          const operationResult = response.data?.operation_result || {}
-          
-          if (operationResult.status === 'success') {
-            // 更新步骤状态
-            this.$set(this.stepStatus, 3, true)
-            
-            // 立即更新进度显示
-            this.$forceUpdate()
+        if (response && response.status === 200) {
+          // 更新步骤状态
+          this.$set(this.stepStatus, 3, true)
+          this.$forceUpdate()
 
-            // 隐藏等待提示
-            this.dataPreprocessingLoading = false
+          // 隐藏等待提示
+          this.dataPreprocessingLoading = false
 
-            // 显示成功消息提示
-            this.$message({
-              message: operationResult.message || '数据预处理执行成功',
-              type: 'success',
-              duration: 1000,
-              showClose: true
-            })
+          this.$message({
+            message: '数据预处理完成，正在加载3D模型...',
+            type: 'success',
+            duration: 3000,
+            showClose: true
+          })
 
-            // 显示详细的处理结果
-            const inputFilesCount = response.data?.input_files_count || 0
-            const outputFilesCount = response.data?.output_files_count || 0
-            
-            this.uploadResult = {
-              type: 'success',
-              title: '✓ 数据预处理执行成功',
-              message: `已成功处理 ${inputFilesCount} 个掩码文件，生成 ${outputFilesCount} 个预处理结果文件`
-            }
-
-            // 不自动跳转，只更新步骤状态，让下一步按钮可用
-          } else {
-            // 后端执行失败
-            throw new Error(operationResult.message || '数据预处理执行失败')
+          // 显示3D预览区域并加载模型
+          this.showStep4Viewer = true
+          await this.$nextTick()
+          if (this.$refs.step4viewer) {
+            await this.$refs.step4viewer.loadFromBlob(response.data)
           }
         } else {
-          throw new Error(response?.message || '数据预处理执行失败')
+          throw new Error('数据预处理执行失败')
         }
       } catch (error) {
         console.error('数据预处理执行失败:', error)
@@ -1158,6 +1279,243 @@ export default {
       // 模型加载通过visible prop的watch自动触发，无需手动调用
     },
 
+    // 执行形态学分析（第六步）
+    async executeMorphologicalAnalysis() {
+      if (this.isAnalyzing) {
+        this.$message.warning('正在执行形态学分析，请稍候')
+        return
+      }
+
+      this.isAnalyzing = true
+      this.$message.info('开始执行形态学分析，请稍候...')
+
+      try {
+        const projectId = this.project.id
+        if (!projectId) {
+          this.$message.error('项目ID不存在')
+          return
+        }
+
+        // 调用后端API执行形态学分析（与其他步骤保持一致）
+        const response = await executeMorphologicalAnalysis(projectId)
+
+        if (response && response.code === 200) {
+          // 保存分析结果数据
+          this.morphologicalAnalysisData = response.data
+          
+          // 将文件内容存储到SessionStorage（确保用户数据隔离）
+          try {
+            const storageKey = `morphological_analysis_${projectId}`
+            const storageData = {
+              excel_content: response.data.excel_content,
+              csv_content: response.data.csv_content,
+              excel_filename: response.data.excel_filename,
+              csv_filename: response.data.csv_filename,
+              generated_time: new Date().toISOString()
+            }
+            sessionStorage.setItem(storageKey, JSON.stringify(storageData))
+            console.log('文件内容已存储到SessionStorage')
+          } catch (storageError) {
+            console.error('存储到SessionStorage失败:', storageError)
+          }
+          
+          // 解析文件内容并存储到组件数据中
+          this.parseFileContents(response.data)
+          
+          // 标记第六步为完成状态
+          this.$set(this.stepStatus, 5, true)
+          
+          // 强制重新计算进度
+          this.$nextTick(() => {
+            this.$forceUpdate()
+          })
+          
+          this.$message.success('形态学分析执行完成，文件内容已接收并解析')
+        } else {
+          throw new Error(response?.message || '形态学分析执行失败')
+        }
+      } catch (error) {
+        console.error('执行形态学分析失败:', error)
+        this.$message.error(`形态学分析执行失败: ${error.message || '未知错误'}`)
+      } finally {
+        this.isAnalyzing = false
+      }
+    },
+
+    // 下载形态学分析文件（从SessionStorage直接下载）- 已由 downloadBothFiles 替代，保留以备兼容
+    async downloadFile(fileType) {
+      try {
+        const projectId = this.project.id
+        if (!projectId) {
+          this.$message.error('项目ID不存在')
+          return
+        }
+
+        // 从SessionStorage获取文件内容
+        const storageKey = `morphological_analysis_${projectId}`
+        const storageData = sessionStorage.getItem(storageKey)
+        
+        if (!storageData) {
+          this.$message.error('文件内容不存在，请先执行形态学分析')
+          return
+        }
+
+        const parsedData = JSON.parse(storageData)
+        const fileContent = fileType === 'excel' ? parsedData.excel_content : parsedData.csv_content
+        const filename = fileType === 'excel' ? parsedData.excel_filename : parsedData.csv_filename
+
+        if (!fileContent) {
+          this.$message.error(`${fileType === 'excel' ? 'Excel' : 'CSV'}文件内容不存在`)
+          return
+        }
+
+        // 将base64内容转换为Blob
+        const binaryContent = atob(fileContent)
+        const bytes = new Uint8Array(binaryContent.length)
+        for (let i = 0; i < binaryContent.length; i++) {
+          bytes[i] = binaryContent.charCodeAt(i)
+        }
+        
+        const blob = new Blob([bytes], { 
+          type: fileType === 'excel' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'text/csv' 
+        })
+        
+        // 创建下载链接
+        const url = window.URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = filename
+        
+        // 触发下载
+        document.body.appendChild(link)
+        link.click()
+        
+        // 清理资源
+        window.URL.revokeObjectURL(url)
+        document.body.removeChild(link)
+        
+        this.$message.success(`开始下载${fileType === 'excel' ? 'Excel报告' : 'CSV明细'}`)
+      } catch (error) {
+        console.error('下载文件失败:', error)
+        this.$message.error(`下载文件失败: ${error.message || '未知错误'}`)
+      }
+    },
+
+    // 处理文件类型切换
+    handleFileTypeSwitch(fileType) {
+      this.activeFileType = fileType
+      console.log(`切换到${fileType === 'excel' ? 'Excel报告' : 'CSV明细'}`)
+    },
+
+    // 解析文件内容（Excel 使用 SheetJS，CSV 解析为表格数据）
+    parseFileContents(data) {
+      try {
+        // 解析 Excel
+        if (data.excel_content) {
+          this.fileContents.excel.content = data.excel_content
+          this.fileContents.excel.filename = data.excel_filename
+          try {
+            const binaryStr = atob(data.excel_content)
+            const bytes = new Uint8Array(binaryStr.length)
+            for (let i = 0; i < binaryStr.length; i++) {
+              bytes[i] = binaryStr.charCodeAt(i)
+            }
+            const workbook = XLSX.read(bytes, { type: 'array' })
+            const sheets = workbook.SheetNames.map(name => {
+              const ws = workbook.Sheets[name]
+              const jsonData = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })
+              const headers = (jsonData[0] || []).map(h => String(h))
+              const rows = jsonData.slice(1).map(row => row.map(c => (c === null || c === undefined) ? '' : String(c)))
+              return { name, headers, rows }
+            })
+            this.fileContents.excel.parsedData = { sheets }
+            this.activeSheetIndex = 0
+          } catch (excelError) {
+            console.error('Excel 解析失败:', excelError)
+            this.fileContents.excel.parsedData = { sheets: [] }
+          }
+        }
+
+        // 解析 CSV
+        if (data.csv_content) {
+          this.fileContents.csv.content = data.csv_content
+          this.fileContents.csv.filename = data.csv_filename
+          try {
+            let csvText
+            try {
+              csvText = decodeURIComponent(escape(atob(data.csv_content)))
+            } catch (e) {
+              csvText = atob(data.csv_content)
+            }
+            const allLines = csvText.split('\n').filter(l => l.trim())
+            const headers = allLines[0] ? allLines[0].split(',').map(h => h.trim()) : []
+            const rows = allLines.slice(1).map(line => line.split(',').map(c => c.trim()))
+            this.fileContents.csv.parsedData = { headers, rows, totalRows: allLines.length }
+          } catch (csvError) {
+            console.error('CSV 解析失败:', csvError)
+            this.fileContents.csv.parsedData = { headers: [], rows: [], totalRows: 0 }
+          }
+        }
+
+        console.log('文件内容解析完成')
+      } catch (error) {
+        console.error('文件内容解析失败:', error)
+      }
+    },
+
+    // 一次性下载 Excel 和 CSV 两个文件
+    async downloadBothFiles() {
+      try {
+        const projectId = this.project.id
+        const storageKey = `morphological_analysis_${projectId}`
+        const storageData = sessionStorage.getItem(storageKey)
+
+        if (!storageData) {
+          this.$message.error('文件内容不存在，请先执行形态学分析')
+          return
+        }
+
+        const parsedData = JSON.parse(storageData)
+
+        const downloadBlob = (base64, filename, mimeType) => {
+          const binary = atob(base64)
+          const bytes = new Uint8Array(binary.length)
+          for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i)
+          }
+          const blob = new Blob([bytes], { type: mimeType })
+          const url = window.URL.createObjectURL(blob)
+          const link = document.createElement('a')
+          link.href = url
+          link.download = filename
+          document.body.appendChild(link)
+          link.click()
+          window.URL.revokeObjectURL(url)
+          document.body.removeChild(link)
+        }
+
+        if (parsedData.excel_content && parsedData.excel_filename) {
+          downloadBlob(
+            parsedData.excel_content,
+            parsedData.excel_filename,
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+          )
+        }
+
+        // 短暂延迟，避免部分浏览器拦截连续下载
+        await new Promise(resolve => setTimeout(resolve, 600))
+
+        if (parsedData.csv_content && parsedData.csv_filename) {
+          downloadBlob(parsedData.csv_content, parsedData.csv_filename, 'text/csv;charset=utf-8;')
+        }
+
+        this.$message.success('已开始下载 Excel 报告和 CSV 明细')
+      } catch (error) {
+        console.error('下载文件失败:', error)
+        this.$message.error(`下载失败: ${error.message || '未知错误'}`)
+      }
+    }
+
   }
 
 }
@@ -1276,5 +1634,41 @@ export default {
   margin-top: 10px;
   font-weight: bold;
   color: #409eff;
+}
+
+/* 分析结果表格样式 */
+.analysis-table-wrap {
+  overflow-x: auto;
+  max-height: 500px;
+  overflow-y: auto;
+  border: 1px solid #ebeef5;
+  border-radius: 4px;
+}
+
+.analysis-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.analysis-table th,
+.analysis-table td {
+  border: 1px solid #ebeef5;
+  padding: 6px 12px;
+  text-align: left;
+}
+
+.analysis-table thead th {
+  background: #f5f7fa;
+  font-weight: 600;
+  color: #606266;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.analysis-table tbody tr:hover {
+  background: #f0f8ff;
 }
 </style>

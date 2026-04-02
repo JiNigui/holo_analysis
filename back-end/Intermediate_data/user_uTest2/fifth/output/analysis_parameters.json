@@ -1,16 +1,16 @@
 {
-  "max_area": 6586.031665818708,
+  "max_area": 5968.18502243064,
   "best_plane": [
     0.0,
     0.0,
     1.0
   ],
   "centroid": [
-    21.31620866572673,
-    12.682110837762805,
-    20.164766619048105
+    21.696388755954626,
+    12.85385199481997,
+    19.218836502208724
   ],
   "largest_region_id": 0,
-  "largest_region_points": 3538861,
+  "largest_region_points": 3452300,
   "combined_file_path": "D:\\孔洞项目\\孔洞分析软件\\back-end\\Intermediate_data\\user_uTest2\\fifth\\output\\combined_selected_regions.vtk"
 }

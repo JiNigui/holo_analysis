@@ -1233,17 +1233,70 @@ def execute_data_preprocessing():
 
         # 检查执行结果
         if result.returncode == 0:
-            # 检查预处理输出目录（使用动态路径）
-            output_files = []
-            if os.path.exists(output_dir):
-                output_files = [f for f in os.listdir(output_dir) if f.endswith('.vtk') or f.endswith('.npy')]
-            
-            operation_result = {
-                "status": "success", 
-                "message": f"数据预处理完成",
-                "input_files": len(mask_files),
-                "output_files": len(output_files)
-            }
+            # 检查主函数输出的vtk文件是否存在
+            main_output_vtk = os.path.join(output_dir, 'output_with_regions.vtk')
+            if not os.path.exists(main_output_vtk):
+                return jsonify({
+                    'code': 500,
+                    'message': '数据预处理完成但未生成 output_with_regions.vtk 文件'
+                }), 500
+
+            # 执行 another_filter.py 进行形态学清洗
+            another_filter_path = os.path.join(
+                Config.BASE_DIR,
+                'hole-analysis',
+                '第4步 数据预处理',
+                'another_filter.py'
+            )
+            if not os.path.exists(another_filter_path):
+                return jsonify({
+                    'code': 404,
+                    'message': f'形态学清洗脚本不存在: {another_filter_path}'
+                }), 404
+
+            print(f"开始执行形态学清洗 (another_filter.py)...")
+            print(f"工作目录: {output_dir}")
+            try:
+                filter_result = subprocess.run(
+                    [sys.executable, another_filter_path],
+                    cwd=output_dir,
+                    text=True,
+                    timeout=600  # 10分钟超时
+                )
+            except subprocess.TimeoutExpired:
+                return jsonify({
+                    'code': 408,
+                    'message': '形态学清洗执行超时（超过10分钟）'
+                }), 408
+
+            if filter_result.returncode != 0:
+                return jsonify({
+                    'code': 500,
+                    'message': '形态学清洗执行失败，请检查后端日志'
+                }), 500
+
+            cleaned_vtk = os.path.join(output_dir, 'output_with_regions_cleaned_v3.vtk')
+            if not os.path.exists(cleaned_vtk):
+                return jsonify({
+                    'code': 500,
+                    'message': '形态学清洗完成但未生成 output_with_regions_cleaned_v3.vtk 文件'
+                }), 500
+
+            # 将 vtk 转换为 vtp，供前端 Three.js 渲染
+            print("正在将 vtk 转换为 vtp 格式...")
+            try:
+                import pyvista as pv
+                mesh_cleaned = pv.read(cleaned_vtk)
+                if isinstance(mesh_cleaned, pv.UnstructuredGrid):
+                    mesh_cleaned = mesh_cleaned.extract_surface()
+                cleaned_vtp = os.path.join(output_dir, 'output_with_regions_cleaned_v3.vtp')
+                mesh_cleaned.save(cleaned_vtp, binary=True)
+                print(f"VTP 文件已保存: {cleaned_vtp}, 大小: {os.path.getsize(cleaned_vtp) / 1024 / 1024:.2f} MB")
+            except Exception as conv_err:
+                return jsonify({
+                    'code': 500,
+                    'message': f'VTP 转换失败: {str(conv_err)}'
+                }), 500
 
             # 记录成功日志
             try:
@@ -1256,18 +1309,16 @@ def execute_data_preprocessing():
             except Exception as log_error:
                 print(f"记录日志失败: {str(log_error)}")
 
-            return jsonify({
-                'code': 200,
-                'message': '数据预处理完成',
-                'data': {
-                    'project_id': project_id,
-                    'operation_result': operation_result,
-                    'input_files_count': len(mask_files),
-                    'output_files_count': len(output_files),
-                    'output_path': output_dir,
-                    'timestamp': datetime.datetime.now().isoformat()
-                }
-            }), 200
+            print("数据预处理全流程完成，返回 VTP 文件给前端")
+            return send_file(
+                cleaned_vtp,
+                as_attachment=True,
+                download_name='output_with_regions_cleaned_v3.vtp',
+                mimetype='application/octet-stream',
+                conditional=True,
+                etag=False,
+                max_age=0
+            )
         else:
             # 记录失败日志
             try:
@@ -1576,6 +1627,17 @@ def execute_target_hole_analysis():
                             output_image_file = os.path.join(output_dir, 'projected_2d_image_with_cut_plane_position.png')
                             
                             if os.path.exists(output_image_file):
+                                # 同时保存到第五步脚本目录，方便查阅
+                                try:
+                                    import shutil
+                                    step5_dir = os.path.join(Config.BASE_DIR, 'hole-analysis', '第5步 寻找目标孔洞并切片')
+                                    os.makedirs(step5_dir, exist_ok=True)
+                                    dest_image = os.path.join(step5_dir, 'projected_2d_image_with_cut_plane_position.png')
+                                    shutil.copy2(output_image_file, dest_image)
+                                    print(f"切面图已复制到: {dest_image}")
+                                except Exception as copy_err:
+                                    print(f"复制切面图到第五步目录失败: {str(copy_err)}")
+
                                 # 记录成功日志（使用动态输出目录）
                                 try:
                                     log_file_path = os.path.join(output_dir, 'analysis_log.txt')
@@ -1843,7 +1905,7 @@ def get_target_hole_progress(project_id):
 @hole_analysis_bp.route('/projects/<int:project_id>/voi-3d-data', methods=['GET'])
 @jwt_required
 def get_voi_3d_data(project_id):
-    """从third/selected_tiff_slices生成VOI区域VTP并返回"""
+    """返回第四步形态清洗后的 VTP 文件（第五步 3D 切面展示使用）"""
     try:
         user_info = request.user
         from app.models.project import Project
@@ -1856,80 +1918,19 @@ def get_voi_3d_data(project_id):
         username = user_info['username']
         project_name = project.project_name
 
-        slices_dir = os.path.join(
+        vtp_path = os.path.join(
             Config.INTERMEDIATE_DATA_DIR,
             f"{username}_{project_name}",
-            "third", "selected_tiff_slices"
+            "fourth", "output", "output_with_regions_cleaned_v3.vtp"
         )
-        if not os.path.exists(slices_dir):
-            return jsonify({'code': 404, 'message': 'VOI切片目录不存在，请先完成VOI选取'}), 404
+        if not os.path.exists(vtp_path):
+            return jsonify({'code': 404, 'message': '清洗后的VTP文件不存在，请先完成第四步数据预处理'}), 404
 
-        slice_files = sorted(
-            [os.path.join(slices_dir, f) for f in os.listdir(slices_dir)
-             if f.startswith('slice_') and f.endswith('.tiff')],
-            key=lambda x: int(''.join(filter(str.isdigit, os.path.basename(x))))
-        )
-        if not slice_files:
-            return jsonify({'code': 400, 'message': 'VOI切片目录中没有slice_*.tiff文件'}), 400
-
-        # 输出目录 fifth/tmp，每次删旧建新
-        vtp_output_dir = os.path.join(
-            Config.INTERMEDIATE_DATA_DIR,
-            f"{username}_{project_name}",
-            "fifth", "tmp"
-        )
-        os.makedirs(vtp_output_dir, exist_ok=True)
-        for fname in os.listdir(vtp_output_dir):
-            if fname.endswith('.vtp'):
-                try:
-                    os.remove(os.path.join(vtp_output_dir, fname))
-                except Exception:
-                    pass
-
-        # 内联 VTKSurfaceProcessorPyVista 逻辑，但使用 slice_* 前缀
-        import numpy as np
-        import tifffile
-        import pyvista as pv
-        from skimage import measure
-        import uuid
-
-        print(f"[VOI-3D] 加载 {len(slice_files)} 个切片...")
-        first_slice = tifffile.imread(slice_files[0])
-        height, width = first_slice.shape
-        volume = np.zeros((len(slice_files), height, width), dtype=np.uint8)
-        for i, fp in enumerate(slice_files):
-            volume[i] = tifffile.imread(fp)
-
-        # 下采样 factor=2
-        factor = 2
-        z_size, y_size, x_size = volume.shape
-        nz, ny, nx = z_size // factor, y_size // factor, x_size // factor
-        cropped = volume[:nz*factor, :ny*factor, :nx*factor]
-        ds = cropped.reshape(nz, factor, ny, factor, nx, factor).mean(axis=(1, 3, 5))
-        ds_binary = (ds > 0.5).astype(np.uint8)
-        print(f"[VOI-3D] 下采样完成: {ds_binary.shape}")
-
-        spacing = (float(factor), float(factor), float(factor))
-        verts, faces, normals, values = measure.marching_cubes(
-            ds_binary, level=0.5, spacing=spacing,
-            gradient_direction='ascent', step_size=2, allow_degenerate=False
-        )
-        faces_pv = np.hstack([[3] + list(face) for face in faces])
-        mesh = pv.PolyData(verts, faces_pv)
-        mesh = mesh.clean()
-        conn = mesh.connectivity(largest_region=True)
-        mesh = conn.extract_surface().clean()
-        mesh = mesh.smooth(n_iter=50, relaxation_factor=0.1)
-
-        vtk_filename = f"surface_{uuid.uuid4().hex[:8]}.vtp"
-        vtk_file_path = os.path.join(vtp_output_dir, vtk_filename)
-        mesh.save(vtk_file_path, binary=True)
-        print(f"[VOI-3D] VTP已保存: {vtk_file_path}, 大小: {os.path.getsize(vtk_file_path)/1024/1024:.2f} MB")
-
+        print(f"[voi-3d-data] 返回 cleaned VTP: {vtp_path}, 大小: {os.path.getsize(vtp_path)/1024/1024:.2f} MB")
         return send_file(
-            vtk_file_path,
+            vtp_path,
             as_attachment=True,
-            download_name=vtk_filename,
+            download_name='output_with_regions_cleaned_v3.vtp',
             mimetype='application/octet-stream',
             conditional=True,
             etag=False,
@@ -1938,8 +1939,8 @@ def get_voi_3d_data(project_id):
 
     except Exception as e:
         import traceback
-        print(f"[VOI-3D] 错误: {traceback.format_exc()}")
-        return jsonify({'code': 500, 'message': f'生成VOI 3D数据失败: {str(e)}'}), 500
+        print(f"[voi-3d-data] 错误: {traceback.format_exc()}")
+        return jsonify({'code': 500, 'message': f'获取VTP文件失败: {str(e)}'}), 500
 
 
 @hole_analysis_bp.route('/projects/<int:project_id>/cut-plane-params', methods=['GET'])
@@ -2415,3 +2416,374 @@ def get_max_hole_3d_view():
         }), 500
     finally:
         print("=== 最大孔洞3D视图请求处理结束 ===")
+
+
+@hole_analysis_bp.route('/morphological-analysis', methods=['POST'])
+@jwt_required
+def execute_morphological_analysis():
+    """执行形态学分析（第六步）"""
+    try:
+        # 从请求上下文获取用户信息
+        user_info = request.user
+
+        # 获取请求参数
+        data = request.get_json()
+        if not data:
+            # 记录参数验证失败日志
+            try:
+                create_system_log(
+                    operation_type='MORPHOLOGICAL_ANALYSIS',
+                    user_id=user_info['user_id'],
+                    status='failed'
+                )
+            except Exception as log_error:
+                print(f"记录参数验证失败日志失败: {str(log_error)}")
+            return jsonify({
+                'code': 400,
+                'message': '请求参数不能为空'
+            }), 400
+
+        project_id = data.get('project_id')
+        if not project_id:
+            # 记录项目ID缺失失败日志
+            try:
+                create_system_log(
+                    operation_type='MORPHOLOGICAL_ANALYSIS',
+                    user_id=user_info['user_id'],
+                    status='failed'
+                )
+            except Exception as log_error:
+                print(f"记录项目ID缺失失败日志失败: {str(log_error)}")
+            return jsonify({
+                'code': 400,
+                'message': '项目ID不能为空'
+            }), 400
+
+        # 检查项目权限
+        from app.models.project import Project
+        project = Project.query.get(int(project_id))
+        if not project:
+            # 记录项目不存在失败日志
+            try:
+                create_system_log(
+                    operation_type='MORPHOLOGICAL_ANALYSIS',
+                    user_id=user_info['user_id'],
+                    project_id=int(project_id),
+                    status='failed'
+                )
+            except Exception as log_error:
+                print(f"记录项目不存在失败日志失败: {str(log_error)}")
+            return jsonify({
+                'code': 404,
+                'message': '项目不存在'
+            }), 404
+
+        if project.user_id != user_info['user_id']:
+            # 记录权限不足失败日志
+            try:
+                create_system_log(
+                    operation_type='MORPHOLOGICAL_ANALYSIS',
+                    user_id=user_info['user_id'],
+                    project_id=int(project_id),
+                    status='failed'
+                )
+            except Exception as log_error:
+                print(f"记录权限不足失败日志失败: {str(log_error)}")
+            return jsonify({
+                'code': 403,
+                'message': '没有权限访问此项目'
+            }), 403
+
+        # 动态生成用户项目临时路径
+        username = user_info['username']
+        project_name = project.project_name
+
+        # 输入文件：用户项目临时目录的fifth/output/combined_selected_regions.vtk
+        input_vtk_file = os.path.join(
+            Config.INTERMEDIATE_DATA_DIR,
+            f"{username}_{project_name}",
+            "fifth",
+            "output",
+            "combined_selected_regions.vtk"
+        )
+
+        # 检查输入文件是否存在
+        if not os.path.exists(input_vtk_file):
+            # 记录目标孔洞分析未完成失败日志
+            try:
+                create_system_log(
+                    operation_type='MORPHOLOGICAL_ANALYSIS',
+                    user_id=user_info['user_id'],
+                    project_id=int(project_id),
+                    status='failed'
+                )
+            except Exception as log_error:
+                print(f"记录目标孔洞分析未完成失败日志失败: {str(log_error)}")
+            return jsonify({
+                'code': 400,
+                'message': '请先完成第五步目标孔洞分析'
+            }), 400
+
+        # 输出目录：用户项目临时目录的sixth/output
+        output_dir = os.path.join(
+            Config.INTERMEDIATE_DATA_DIR,
+            f"{username}_{project_name}",
+            "sixth",
+            "output"
+        )
+
+        # 确保输出目录存在
+        os.makedirs(output_dir, exist_ok=True)
+
+        # 构建Python脚本路径
+        script_path = os.path.join(
+            Config.BASE_DIR,
+            'hole-analysis',
+            '第6步 形态学分析',
+            '参数输出加判别.py'
+        )
+
+        # 检查脚本文件是否存在
+        if not os.path.exists(script_path):
+            # 记录脚本文件不存在失败日志
+            try:
+                create_system_log(
+                    operation_type='MORPHOLOGICAL_ANALYSIS',
+                    user_id=user_info['user_id'],
+                    project_id=int(project_id),
+                    status='failed'
+                )
+            except Exception as log_error:
+                print(f"记录脚本文件不存在失败日志失败: {str(log_error)}")
+            return jsonify({
+                'code': 404,
+                'message': f'形态学分析脚本文件不存在: {script_path}'
+            }), 404
+
+        # 设置工作目录为脚本所在目录
+        script_dir = os.path.dirname(script_path)
+
+        print(f"开始执行形态学分析...")
+        print(f"输入文件: {input_vtk_file}")
+        print(f"输出目录: {output_dir}")
+        print(f"脚本路径: {script_path}")
+
+        # 执行Python脚本，传递输入和输出路径参数
+        result = subprocess.run(
+            [sys.executable, script_path, input_vtk_file, "--output-dir", output_dir],
+            cwd=script_dir,
+            capture_output=True,
+            text=True,
+            timeout=3600  # 1小时超时
+        )
+
+        # 检查执行结果
+        if result.returncode == 0:
+            # 检查输出文件是否生成
+            excel_file = os.path.join(output_dir, "智能鉴定与三维全参数矩阵.xlsx")
+            csv_file = os.path.join(output_dir, "单体孔洞参数明细.csv")
+            
+            if not (os.path.exists(excel_file) and os.path.exists(csv_file)):
+                # 记录输出文件未生成失败日志
+                try:
+                    create_system_log(
+                        operation_type='MORPHOLOGICAL_ANALYSIS',
+                        user_id=user_info['user_id'],
+                        project_id=int(project_id),
+                        status='failed'
+                    )
+                except Exception as log_error:
+                    print(f"记录输出文件未生成失败日志失败: {str(log_error)}")
+                return jsonify({
+                    'code': 500,
+                    'message': '形态学分析执行成功，但未生成预期输出文件'
+                }), 500
+
+            # 读取文件内容
+            try:
+                with open(excel_file, 'rb') as f:
+                    excel_content = f.read()
+                with open(csv_file, 'rb') as f:
+                    csv_content = f.read()
+                
+                # 将二进制内容转换为base64编码，便于JSON传输
+                import base64
+                excel_base64 = base64.b64encode(excel_content).decode('utf-8')
+                csv_base64 = base64.b64encode(csv_content).decode('utf-8')
+                
+            except Exception as e:
+                print(f"读取文件内容失败: {str(e)}")
+                return jsonify({
+                    'code': 500,
+                    'message': f'读取分析结果文件失败: {str(e)}'
+                }), 500
+
+            # 记录成功日志
+            try:
+                create_system_log(
+                    operation_type='MORPHOLOGICAL_ANALYSIS',
+                    user_id=user_info['user_id'],
+                    project_id=int(project_id),
+                    status='success'
+                )
+                print("形态学分析处理完成，文件内容已读取")
+            except Exception as log_error:
+                print(f"记录日志失败: {str(log_error)}")
+
+            return jsonify({
+                'code': 200,
+                'message': '形态学分析处理完成',
+                'data': {
+                    'input_file': input_vtk_file,
+                    'output_dir': output_dir,
+                    'excel_content': excel_base64,  # 直接返回文件内容
+                    'csv_content': csv_base64,       # 直接返回文件内容
+                    'excel_filename': '智能鉴定与三维全参数矩阵.xlsx',
+                    'csv_filename': '单体孔洞参数明细.csv',
+                    'output': result.stdout
+                }
+            }), 200
+        else:
+            # 记录脚本执行失败日志
+            try:
+                create_system_log(
+                    operation_type='MORPHOLOGICAL_ANALYSIS',
+                    user_id=user_info['user_id'],
+                    project_id=int(project_id),
+                    status='failed'
+                )
+            except Exception as log_error:
+                print(f"记录脚本执行失败日志失败: {str(log_error)}")
+            
+            error_message = f'形态学分析脚本执行失败: {result.stderr}'
+            print(error_message)
+            return jsonify({
+                'code': 500,
+                'message': error_message
+            }), 500
+
+    except subprocess.TimeoutExpired:
+        # 记录超时失败日志
+        try:
+            create_system_log(
+                operation_type='MORPHOLOGICAL_ANALYSIS',
+                user_id=user_info['user_id'],
+                project_id=int(project_id),
+                status='failed'
+            )
+        except Exception as log_error:
+            print(f"记录超时失败日志失败: {str(log_error)}")
+        
+        return jsonify({
+            'code': 408,
+            'message': '形态学分析执行超时（超过1小时）'
+        }), 408
+    except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"执行形态学分析时发生错误: {str(e)}")
+        print(f"错误堆栈: {error_trace}")
+
+        # 记录形态学分析异常失败日志
+        try:
+            create_system_log(
+                operation_type='MORPHOLOGICAL_ANALYSIS',
+                user_id=user_info['user_id'],
+                project_id=int(project_id),
+                status='failed'
+            )
+        except Exception as log_error:
+            print(f"记录形态学分析异常失败日志失败: {str(log_error)}")
+
+        return jsonify({
+            'code': 500,
+            'message': f'执行形态学分析时发生错误: {str(e)}'
+        }), 500
+
+
+@hole_analysis_bp.route('/download-morphological-file', methods=['GET'])
+@jwt_required
+def download_morphological_file():
+    """下载形态学分析文件"""
+    try:
+        # 从请求上下文获取用户信息
+        user_info = request.user
+
+        # 获取请求参数
+        file_type = request.args.get('type')  # 'excel' 或 'csv'
+        project_id = request.args.get('project_id')
+
+        if not file_type or not project_id:
+            return jsonify({
+                'code': 400,
+                'message': '文件类型和项目ID不能为空'
+            }), 400
+
+        if file_type not in ['excel', 'csv']:
+            return jsonify({
+                'code': 400,
+                'message': '文件类型必须是 excel 或 csv'
+            }), 400
+
+        # 检查项目权限
+        from app.models.project import Project
+        project = Project.query.get(int(project_id))
+        if not project:
+            return jsonify({
+                'code': 404,
+                'message': '项目不存在'
+            }), 404
+
+        if project.user_id != user_info['user_id']:
+            return jsonify({
+                'code': 403,
+                'message': '没有权限访问此项目'
+            }), 403
+
+        # 动态生成文件路径
+        username = user_info['username']
+        project_name = project.project_name
+        
+        if file_type == 'excel':
+            file_path = os.path.join(
+                Config.INTERMEDIATE_DATA_DIR,
+                f"{username}_{project_name}",
+                "sixth",
+                "output",
+                "智能鉴定与三维全参数矩阵.xlsx"
+            )
+            filename = "智能鉴定与三维全参数矩阵.xlsx"
+        else:
+            file_path = os.path.join(
+                Config.INTERMEDIATE_DATA_DIR,
+                f"{username}_{project_name}",
+                "sixth",
+                "output",
+                "单体孔洞参数明细.csv"
+            )
+            filename = "单体孔洞参数明细.csv"
+
+        # 检查文件是否存在
+        if not os.path.exists(file_path):
+            return jsonify({
+                'code': 404,
+                'message': f'{file_type.upper()}文件不存在，请先执行形态学分析'
+            }), 404
+
+        # 返回文件下载
+        return send_file(
+            file_path,
+            as_attachment=True,
+            download_name=filename
+        )
+
+    except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"下载形态学分析文件时发生错误: {str(e)}")
+        print(f"错误堆栈: {error_trace}")
+
+        return jsonify({
+            'code': 500,
+            'message': f'下载文件时发生错误: {str(e)}'
+        }), 500

@@ -79,7 +79,7 @@ export default {
       const height = container.clientHeight || 600
 
       this.scene = new THREE.Scene()
-      this.scene.background = new THREE.Color(0x1a1a2e)
+      this.scene.background = new THREE.Color(0xf5f7fa)
 
       this.camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100000)
       this.camera.position.set(0, 0, 3000)
@@ -92,11 +92,14 @@ export default {
       this.controls = new OrbitControls(this.camera, this.renderer.domElement)
       this.controls.enableDamping = true
 
-      const ambientLight = new THREE.AmbientLight(0xffffff, 0.6)
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.5)
       this.scene.add(ambientLight)
-      const dirLight = new THREE.DirectionalLight(0xffffff, 0.8)
-      dirLight.position.set(1, 2, 3)
+      const dirLight = new THREE.DirectionalLight(0xffffff, 0.75)
+      dirLight.position.set(1.5, 2.0, 1.5)
       this.scene.add(dirLight)
+      const dirLight2 = new THREE.DirectionalLight(0x8899dd, 0.3)
+      dirLight2.position.set(-1.5, -0.5, -1.0)
+      this.scene.add(dirLight2)
 
       this.animate()
     },
@@ -154,8 +157,9 @@ export default {
       box.getSize(size)
 
       if (!normal || !origin) {
-        const mat = new THREE.MeshLambertMaterial({
-          color: 0x4fc3f7, transparent: true, opacity: 0.85, side: THREE.DoubleSide
+        const mat = new THREE.MeshPhongMaterial({
+          color: 0x1565c0, specular: new THREE.Color(0x333333), shininess: 50,
+          transparent: true, opacity: 0.85, side: THREE.DoubleSide
         })
         const mesh = new THREE.Mesh(geometry, mat)
         this.scene.add(mesh)
@@ -174,8 +178,9 @@ export default {
 
       // 上半部分（法向量正方向偏移）
       const clipAbove = new THREE.Plane(planeNormal.clone(), planeConstant - gapHalf)
-      const matAbove = new THREE.MeshLambertMaterial({
-        color: 0x4fc3f7, transparent: true, opacity: 0.85,
+      const matAbove = new THREE.MeshPhongMaterial({
+        color: 0x1565c0, specular: new THREE.Color(0x333333), shininess: 50,
+        transparent: true, opacity: 0.85,
         side: THREE.DoubleSide, clippingPlanes: [clipAbove]
       })
       const meshAbove = new THREE.Mesh(geometry, matAbove)
@@ -184,8 +189,9 @@ export default {
 
       // 下半部分（法向量负方向偏移）
       const clipBelow = new THREE.Plane(planeNormal.clone().negate(), -planeConstant - gapHalf)
-      const matBelow = new THREE.MeshLambertMaterial({
-        color: 0xff7043, transparent: true, opacity: 0.85,
+      const matBelow = new THREE.MeshPhongMaterial({
+        color: 0xbf360c, specular: new THREE.Color(0x333333), shininess: 50,
+        transparent: true, opacity: 0.85,
         side: THREE.DoubleSide, clippingPlanes: [clipBelow]
       })
       const meshBelow = new THREE.Mesh(geometry, matBelow)
@@ -196,7 +202,7 @@ export default {
       const planeSize = Math.max(size.x, size.y, size.z) * 2.0
       const planeGeo = new THREE.PlaneGeometry(planeSize, planeSize)
       const planeMat = new THREE.MeshBasicMaterial({
-        color: 0xffeb3b, transparent: true, opacity: 0.08, side: THREE.DoubleSide
+        color: 0x90caf9, transparent: true, opacity: 0.15, side: THREE.DoubleSide
       })
       const planeMesh = new THREE.Mesh(planeGeo, planeMat)
       planeMesh.position.copy(planeOrigin)
@@ -205,7 +211,7 @@ export default {
 
       // 正方形边框线
       const edgeGeo = new THREE.EdgesGeometry(planeGeo)
-      const edgeMat = new THREE.LineBasicMaterial({ color: 0xffd600, linewidth: 2 })
+      const edgeMat = new THREE.LineBasicMaterial({ color: 0x1565c0, linewidth: 2 })
       const edgeLine = new THREE.LineSegments(edgeGeo, edgeMat)
       edgeLine.position.copy(planeOrigin)
       edgeLine.quaternion.copy(planeMesh.quaternion)
@@ -260,7 +266,7 @@ export default {
       if (segments.length === 0) return null
 
       const geo = new THREE.BufferGeometry().setFromPoints(segments)
-      const mat = new THREE.LineBasicMaterial({ color: 0x00e5ff, linewidth: 2 })
+      const mat = new THREE.LineBasicMaterial({ color: 0xff6d00, linewidth: 2 })
       return new THREE.LineSegments(geo, mat)
     },
 
@@ -345,6 +351,6 @@ export default {
   width: 100%;
   height: 100%;
   min-height: 500px;
-  background: #1a1a2e;
+  background: #f5f7fa;
 }
 </style>

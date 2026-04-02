@@ -1,56 +1,16 @@
-INFO:werkzeug:127.0.0.1 - - [27/Mar/2026 21:04:24] "GET /api/hole-analysis/target-hole-progress/14 HTTP/1.1" 200 -
-图像已成功生成: D:\孔洞项目\孔洞分析软件\back-end\Intermediate_data\user_uTest2\fifth\output\projected_2d_image_with_cut_plane_position.png
-记录数据库成功日志失败: Working outside of application context.
+[Vue warn]: Property or method "console" is not defined on the instance but referenced during render. Make sure that this property is reactive, either in the data option, or for class-based components, by initializing the property. See: https://vuejs.org/v2/guide/reactivity.html#Declaring-Reactive-Properties.
 
-This typically means that you attempted to use functionality that needed
-the current application. To solve this, set up an application context
-with app.app_context(). See the documentation for more information.
-INFO:werkzeug:127.0.0.1 - - [27/Mar/2026 21:04:26] "GET /api/hole-analysis/target-hole-progress/14 HTTP/1.1" 200 -
-进度已更新到100%（结果图像生成完成）
-INFO:werkzeug:127.0.0.1 - - [27/Mar/2026 21:04:34] "GET /api/hole-analysis/projects/14/cut-plane-params HTTP/1.1" 200 -
-[VOI-3D] 加载 467 个切片...
-[VOI-3D] 下采样完成: (233, 123, 169)
-[VOI-3D] VTP已保存: D:\孔洞项目\孔洞分析软件\back-end\Intermediate_data\user_uTest2\fifth\tmp\surface_dfbbb942.vtp, 大小: 2.38 MB
-INFO:werkzeug:127.0.0.1 - - [27/Mar/2026 21:04:36] "GET /api/hole-analysis/projects/14/voi-3d-data HTTP/1.1" 200 -
+found in
 
-
-cjs.js?!./node_modules/babel-loader/lib/index.js!./node_modules/cache-loader/dist/cjs.js?!./node_modules/vue-loader/lib/index.js?!./src/components/HoleCutViewer3D.vue?vue&type=script&lang=js:129 [HoleCutViewer3D] 加载失败: TypeError: blobRes.arrayBuffer is not a function
-    at eval (cjs.js?!./node_modules/babel-loader/lib/index.js!./node_modules/cache-loader/dist/cjs.js?!./node_modules/vue-loader/lib/index.js?!./src/components/HoleCutViewer3D.vue?vue&type=script&lang=js:118:30)
-    at Generator.eval (regenerator.js:70:51)
-    at Generator.eval [as next] (regeneratorDefine.js:13:21)
-    at asyncGeneratorStep (asyncToGenerator.js:8:17)
-    at _next (asyncToGenerator.js:22:9)
-eval @ cjs.js?!./node_modules/babel-loader/lib/index.js!./node_modules/cache-loader/dist/cjs.js?!./node_modules/vue-loader/lib/index.js?!./src/components/HoleCutViewer3D.vue?vue&type=script&lang=js:129
-eval @ regenerator.js:70
-eval @ regeneratorDefine.js:13
-asyncGeneratorStep @ asyncToGenerator.js:8
-_next @ asyncToGenerator.js:22
-Promise.then
-asyncGeneratorStep @ asyncToGenerator.js:13
-_next @ asyncToGenerator.js:22
-eval @ asyncToGenerator.js:27
-eval @ asyncToGenerator.js:19
-init @ cjs.js?!./node_modules/babel-loader/lib/index.js!./node_modules/cache-loader/dist/cjs.js?!./node_modules/vue-loader/lib/index.js?!./src/components/HoleCutViewer3D.vue?vue&type=script&lang=js:139
-eval @ cjs.js?!./node_modules/babel-loader/lib/index.js!./node_modules/cache-loader/dist/cjs.js?!./node_modules/vue-loader/lib/index.js?!./src/components/HoleCutViewer3D.vue?vue&type=script&lang=js:92
-eval @ vue.runtime.esm.js:1979
-flushCallbacks @ vue.runtime.esm.js:1905
-Promise.then
-timerFunc @ vue.runtime.esm.js:1932
-nextTick @ vue.runtime.esm.js:1989
-visible @ index.js:95
-run @ vue.runtime.esm.js:4556
-flushSchedulerQueue @ vue.runtime.esm.js:4298
-eval @ vue.runtime.esm.js:1979
-flushCallbacks @ vue.runtime.esm.js:1905
-Promise.then
-timerFunc @ vue.runtime.esm.js:1932
-nextTick @ vue.runtime.esm.js:1989
-queueWatcher @ vue.runtime.esm.js:4390
-update @ vue.runtime.esm.js:4532
-notify @ vue.runtime.esm.js:731
-reactiveSetter @ vue.runtime.esm.js:1056
-proxySetter @ vue.runtime.esm.js:4619
-showMaxHole3DView @ cjs.js?!./node_modules/babel-loader/lib/index.js!./node_modules/cache-loader/dist/cjs.js?!./node_modules/vue-loader/lib/index.js?!./src/views/project/detail.vue?vue&type=script&lang=js:1478
+---> <ProjectDetail> at src/views/project/detail.vue
+       <AppMain> at src/layout/components/AppMain.vue
+         <Layout> at src/layout/index.vue
+           <App> at src/App.vue
+             <Root>
+warn @ vue.runtime.esm.js:620
+warnNonPresent @ vue.runtime.esm.js:2014
+get @ vue.runtime.esm.js:2069
+click @ cjs.js?{"cacheDirectory":"node_modules/.cache/vue-loader","cacheIdentifier":"38ce9ce0-vue-loader-template"}!./node_modules/vue-loader/lib/loaders/templateLoader.js?!./node_modules/cache-loader/dist/cjs.js?!./node_modules/vue-loader/lib/index.js?!./src/views/project/detail.vue?vue&type=template&id=5bb16921&scoped=true:817
 invokeWithErrorHandling @ vue.runtime.esm.js:1853
 invoker @ vue.runtime.esm.js:2178
 invokeWithErrorHandling @ vue.runtime.esm.js:1853
@@ -59,4 +19,114 @@ handleClick @ element-ui.common.js:9465
 invokeWithErrorHandling @ vue.runtime.esm.js:1853
 invoker @ vue.runtime.esm.js:2178
 original._wrapper @ vue.runtime.esm.js:6901Understand this errorAI
-session-manager.js:106 页面隐藏，开始计时
+vue.runtime.esm.js:620 [Vue warn]: Error in v-on handler: "TypeError: Cannot read properties of undefined (reading 'log')"
+
+found in
+
+---> <ElButton> at packages/button/src/button.vue
+       <ElButtonGroup> at packages/button/src/button-group.vue
+         <ElCard> at packages/card/src/main.vue
+           <ProjectDetail> at src/views/project/detail.vue
+             <AppMain> at src/layout/components/AppMain.vue
+               <Layout> at src/layout/index.vue
+                 <App> at src/App.vue
+                   <Root>
+warn @ vue.runtime.esm.js:620
+logError @ vue.runtime.esm.js:1883
+globalHandleError @ vue.runtime.esm.js:1878
+handleError @ vue.runtime.esm.js:1838
+invokeWithErrorHandling @ vue.runtime.esm.js:1861
+invoker @ vue.runtime.esm.js:2178
+invokeWithErrorHandling @ vue.runtime.esm.js:1853
+Vue.$emit @ vue.runtime.esm.js:3876
+handleClick @ element-ui.common.js:9465
+invokeWithErrorHandling @ vue.runtime.esm.js:1853
+invoker @ vue.runtime.esm.js:2178
+original._wrapper @ vue.runtime.esm.js:6901Understand this errorAI
+vue.runtime.esm.js:1887 TypeError: Cannot read properties of undefined (reading 'log')
+    at click (cjs.js?{"cacheDirectory":"node_modules/.cache/vue-loader","cacheIdentifier":"38ce9ce0-vue-loader-template"}!./node_modules/vue-loader/lib/loaders/templateLoader.js?!./node_modules/cache-loader/dist/cjs.js?!./node_modules/vue-loader/lib/index.js?!./src/views/project/detail.vue?vue&type=template&id=5bb16921&scoped=true:817:55)
+    at invokeWithErrorHandling (vue.runtime.esm.js:1853:26)
+    at VueComponent.invoker (vue.runtime.esm.js:2178:14)
+    at invokeWithErrorHandling (vue.runtime.esm.js:1853:26)
+    at Vue.$emit (vue.runtime.esm.js:3876:9)
+    at VueComponent.handleClick (element-ui.common.js:9465:12)
+    at invokeWithErrorHandling (vue.runtime.esm.js:1853:26)
+    at HTMLButtonElement.invoker (vue.runtime.esm.js:2178:14)
+    at original._wrapper (vue.runtime.esm.js:6901:25)
+logError @ vue.runtime.esm.js:1887
+globalHandleError @ vue.runtime.esm.js:1878
+handleError @ vue.runtime.esm.js:1838
+invokeWithErrorHandling @ vue.runtime.esm.js:1861
+invoker @ vue.runtime.esm.js:2178
+invokeWithErrorHandling @ vue.runtime.esm.js:1853
+Vue.$emit @ vue.runtime.esm.js:3876
+handleClick @ element-ui.common.js:9465
+invokeWithErrorHandling @ vue.runtime.esm.js:1853
+invoker @ vue.runtime.esm.js:2178
+original._wrapper @ vue.runtime.esm.js:6901Understand this errorAI
+vue.runtime.esm.js:620 [Vue warn]: Property or method "console" is not defined on the instance but referenced during render. Make sure that this property is reactive, either in the data option, or for class-based components, by initializing the property. See: https://vuejs.org/v2/guide/reactivity.html#Declaring-Reactive-Properties.
+
+found in
+
+---> <ProjectDetail> at src/views/project/detail.vue
+       <AppMain> at src/layout/components/AppMain.vue
+         <Layout> at src/layout/index.vue
+           <App> at src/App.vue
+             <Root>
+warn @ vue.runtime.esm.js:620
+warnNonPresent @ vue.runtime.esm.js:2014
+get @ vue.runtime.esm.js:2069
+click @ cjs.js?{"cacheDirectory":"node_modules/.cache/vue-loader","cacheIdentifier":"38ce9ce0-vue-loader-template"}!./node_modules/vue-loader/lib/loaders/templateLoader.js?!./node_modules/cache-loader/dist/cjs.js?!./node_modules/vue-loader/lib/index.js?!./src/views/project/detail.vue?vue&type=template&id=5bb16921&scoped=true:798
+invokeWithErrorHandling @ vue.runtime.esm.js:1853
+invoker @ vue.runtime.esm.js:2178
+invokeWithErrorHandling @ vue.runtime.esm.js:1853
+Vue.$emit @ vue.runtime.esm.js:3876
+handleClick @ element-ui.common.js:9465
+invokeWithErrorHandling @ vue.runtime.esm.js:1853
+invoker @ vue.runtime.esm.js:2178
+original._wrapper @ vue.runtime.esm.js:6901Understand this errorAI
+vue.runtime.esm.js:620 [Vue warn]: Error in v-on handler: "TypeError: Cannot read properties of undefined (reading 'log')"
+
+found in
+
+---> <ElButton> at packages/button/src/button.vue
+       <ElButtonGroup> at packages/button/src/button-group.vue
+         <ElCard> at packages/card/src/main.vue
+           <ProjectDetail> at src/views/project/detail.vue
+             <AppMain> at src/layout/components/AppMain.vue
+               <Layout> at src/layout/index.vue
+                 <App> at src/App.vue
+                   <Root>
+warn @ vue.runtime.esm.js:620
+logError @ vue.runtime.esm.js:1883
+globalHandleError @ vue.runtime.esm.js:1878
+handleError @ vue.runtime.esm.js:1838
+invokeWithErrorHandling @ vue.runtime.esm.js:1861
+invoker @ vue.runtime.esm.js:2178
+invokeWithErrorHandling @ vue.runtime.esm.js:1853
+Vue.$emit @ vue.runtime.esm.js:3876
+handleClick @ element-ui.common.js:9465
+invokeWithErrorHandling @ vue.runtime.esm.js:1853
+invoker @ vue.runtime.esm.js:2178
+original._wrapper @ vue.runtime.esm.js:6901Understand this errorAI
+vue.runtime.esm.js:1887 TypeError: Cannot read properties of undefined (reading 'log')
+    at click (cjs.js?{"cacheDirectory":"node_modules/.cache/vue-loader","cacheIdentifier":"38ce9ce0-vue-loader-template"}!./node_modules/vue-loader/lib/loaders/templateLoader.js?!./node_modules/cache-loader/dist/cjs.js?!./node_modules/vue-loader/lib/index.js?!./src/views/project/detail.vue?vue&type=template&id=5bb16921&scoped=true:798:55)
+    at invokeWithErrorHandling (vue.runtime.esm.js:1853:26)
+    at VueComponent.invoker (vue.runtime.esm.js:2178:14)
+    at invokeWithErrorHandling (vue.runtime.esm.js:1853:26)
+    at Vue.$emit (vue.runtime.esm.js:3876:9)
+    at VueComponent.handleClick (element-ui.common.js:9465:12)
+    at invokeWithErrorHandling (vue.runtime.esm.js:1853:26)
+    at HTMLButtonElement.invoker (vue.runtime.esm.js:2178:14)
+    at original._wrapper (vue.runtime.esm.js:6901:25)
+logError @ vue.runtime.esm.js:1887
+globalHandleError @ vue.runtime.esm.js:1878
+handleError @ vue.runtime.esm.js:1838
+invokeWithErrorHandling @ vue.runtime.esm.js:1861
+invoker @ vue.runtime.esm.js:2178
+invokeWithErrorHandling @ vue.runtime.esm.js:1853
+Vue.$emit @ vue.runtime.esm.js:3876
+handleClick @ element-ui.common.js:9465
+invokeWithErrorHandling @ vue.runtime.esm.js:1853
+invoker @ vue.runtime.esm.js:2178
+original._wrapper @ vue.runtime.esm.js:6901Understand this errorAI
