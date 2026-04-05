@@ -2502,9 +2502,9 @@ def execute_morphological_analysis():
         input_vtk_file = os.path.join(
             Config.INTERMEDIATE_DATA_DIR,
             f"{username}_{project_name}",
-            "fifth",
+            "fourth",
             "output",
-            "combined_selected_regions.vtk"
+            "output_with_regions_cleaned_v3.vtk"
         )
 
         # 检查输入文件是否存在
@@ -2605,18 +2605,121 @@ def execute_morphological_analysis():
                     excel_content = f.read()
                 with open(csv_file, 'rb') as f:
                     csv_content = f.read()
-                
+
                 # 将二进制内容转换为base64编码，便于JSON传输
                 import base64
                 excel_base64 = base64.b64encode(excel_content).decode('utf-8')
                 csv_base64 = base64.b64encode(csv_content).decode('utf-8')
-                
+
             except Exception as e:
                 print(f"读取文件内容失败: {str(e)}")
                 return jsonify({
                     'code': 500,
                     'message': f'读取分析结果文件失败: {str(e)}'
                 }), 500
+
+            # 将分析结果写入数据库
+            try:
+                import pandas as pd
+                from app.models.hole_data import HoleData
+                from app.models.features import Features
+                from app.models import db
+
+                # ---------- 解析 Excel 全局特征，写入 hole_data ----------
+                import openpyxl
+                wb_result = openpyxl.load_workbook(excel_file, data_only=True)
+                ws_global = wb_result['智能鉴定与全局特征']
+
+                # 将 Excel 内容读成 {参数名: 数值} 的字典（去掉大类标题行）
+                param_map = {}
+                for row in ws_global.iter_rows(min_row=2, values_only=True):
+                    name, value, unit = row[0], row[1], row[2]
+                    if name and not str(name).startswith('■') and value is not None:
+                        param_map[str(name).strip()] = value
+
+                # 中文参数名 → ORM字段名映射（只取到最大体积跳跃比）
+                global_field_map = {
+                    '孔洞总数量': 'total_number_of_voids',
+                    '孔洞空间密度': 'void_space_density',
+                    '孔洞总体积': 'total_void_volume',
+                    '孔洞总表面积': 'total_void_surface_area',
+                    '最大体积': 'maximum_volume',
+                    '平均体积': 'mean_volume',
+                    '最小体积': 'minimum_volume',
+                    '最大表面积': 'maximum_surface_area',
+                    '平均表面积': 'mean_surface_area',
+                    '最小表面积': 'minimum_surface_area',
+                    '最大等效直径': 'maximum_equivalent_diameter',
+                    '平均等效直径': 'mean_equivalent_diameter',
+                    '最小等效直径': 'minimum_equivalent_diameter',
+                    '最大球度': 'maximum_sphericity',
+                    '平均球度': 'mean_sphericity',
+                    '最小球度': 'minimum_sphericity',
+                    '最大矩度': 'maximum_rectangularity',
+                    '平均矩度': 'mean_rectangularity',
+                    '最小矩度': 'minimum_rectangularity',
+                    '最大轴比': 'maximum_aspect_ratio',
+                    '平均轴比': 'mean_aspect_ratio',
+                    '最小轴比': 'minimum_aspect_ratio',
+                    '最大长边': 'maximum_long_edge',
+                    '平均长边': 'mean_long_edge',
+                    '最小长边': 'minimum_long_edge',
+                    '最大中心距': 'maximum_center_distance',
+                    '平均中心距': 'mean_center_distance',
+                    '最小中心距': 'minimum_center_distance',
+                    '最大孔洞体积占比': 'maximum_void_volume_fraction',
+                    '体积变异系数 (CV)': 'volume_coefficient_of_variation',
+                    '体积基尼系数 (Gini)': 'volume_gini_coefficient',
+                    '最大体积跳跃比': 'maximum_volume_jump_ratio',
+                }
+
+                hole_data_kwargs = {'project_id': int(project_id)}
+                for zh_name, field in global_field_map.items():
+                    hole_data_kwargs[field] = param_map.get(zh_name)
+
+                # 删除旧记录再插入，保证每个项目只有一条
+                HoleData.query.filter_by(project_id=int(project_id)).delete()
+                hole_data_record = HoleData(**hole_data_kwargs)
+                db.session.add(hole_data_record)
+
+                # ---------- 解析 CSV 前20条单体孔洞，写入 features ----------
+                df_csv = pd.read_csv(csv_file, encoding='utf-8-sig')
+                df_top20 = df_csv.head(20)
+
+                # 获取当前操作日志ID（最新一条 MORPHOLOGICAL_ANALYSIS success 记录）
+                from app.models.operation_logs import OperationLog
+                op_log = OperationLog.query.filter_by(
+                    project_id=int(project_id),
+                    operation_type='MORPHOLOGICAL_ANALYSIS'
+                ).order_by(OperationLog.id.desc()).first()
+                op_id = op_log.id if op_log else None
+
+                # 删除该项目旧的 features 记录再插入
+                Features.query.filter_by(project_id=int(project_id)).delete()
+                now = datetime.datetime.now()
+                for _, row in df_top20.iterrows():
+                    feat = Features(
+                        project_id=int(project_id),
+                        hole_id=int(row['孔洞编号']),
+                        volume=float(row['体积 (mm³)']),
+                        surface_area=float(row['表面积 (mm²)']),
+                        equivalent_diameter=float(row['等效直径 (mm)']),
+                        sphericity=float(row['球度']),
+                        rectangularity=float(row['矩度']),
+                        aspect_ratio=float(row['主轴比']),
+                        long_edge=float(row['长边 (mm)']),
+                        center_distance=float(row['中心距 (mm)']),
+                        operation_id=op_id,
+                        analysis_time=now
+                    )
+                    db.session.add(feat)
+
+                db.session.commit()
+                print(f"数据库写入完成：hole_data 1条，features {len(df_top20)}条")
+
+            except Exception as db_error:
+                db.session.rollback()
+                print(f"数据库写入失败（不影响文件返回）: {str(db_error)}")
 
             # 记录成功日志
             try:

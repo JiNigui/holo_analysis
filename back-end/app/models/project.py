@@ -13,7 +13,7 @@ class Project(db.Model):
     updated_time = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
     
     # 关系
-    hole_data = db.relationship('HoleData', backref='project', lazy=True)
+    hole_data = db.relationship('HoleData', backref='project_ref', lazy=True)
     
     def __repr__(self):
         return f'<Project {self.project_name}>'

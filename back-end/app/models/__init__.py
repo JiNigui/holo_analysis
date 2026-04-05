@@ -6,4 +6,5 @@ db = SQLAlchemy()
 from .user import User
 from .project import Project
 from .hole_data import HoleData
+from .features import Features
 from .operation_logs import OperationLog

@@ -329,30 +329,20 @@
                     :type="activeFileType === 'excel' ? 'primary' : 'default'"
                     @click="handleFileTypeSwitch('excel')"
                   >
-                    Excel报告
+                    智能鉴定与全局特征
                   </el-button>
                   <el-button
                     :type="activeFileType === 'csv' ? 'primary' : 'default'"
                     @click="handleFileTypeSwitch('csv')"
                   >
-                    CSV报告
+                    单体孔洞参数明细
                   </el-button>
                 </el-button-group>
               </div>
 
-              <!-- Excel 内容展示 -->
+              <!-- Excel 内容展示（智能鉴定与全局特征 = Sheet 0） -->
               <div v-if="activeFileType === 'excel'" class="excel-content" style="margin-top: 15px;">
                 <div v-if="fileContents.excel.parsedData && fileContents.excel.parsedData.sheets && fileContents.excel.parsedData.sheets.length">
-                  <!-- 多 Sheet 切换 -->
-                  <div v-if="fileContents.excel.parsedData.sheets.length > 1" style="margin-bottom: 10px;">
-                    <el-radio-group v-model="activeSheetIndex" size="small">
-                      <el-radio-button
-                        v-for="(sheet, idx) in fileContents.excel.parsedData.sheets"
-                        :key="idx"
-                        :label="idx"
-                      >{{ sheet.name }}</el-radio-button>
-                    </el-radio-group>
-                  </div>
                   <!-- 表格 -->
                   <div class="analysis-table-wrap">
                     <table v-if="activeSheetData" class="analysis-table">
@@ -518,7 +508,9 @@ export default {
     activeSheetData() {
       const sheets = this.fileContents.excel.parsedData && this.fileContents.excel.parsedData.sheets
       if (!sheets || sheets.length === 0) return null
-      return sheets[this.activeSheetIndex] || null
+      // 上层按钮 excel -> Sheet 0（智能鉴定与全局特征），csv -> Sheet 1（单体孔洞参数明细）
+      const idx = this.activeFileType === 'csv' ? 1 : 0
+      return sheets[idx] || null
     }
   },
   created() {
